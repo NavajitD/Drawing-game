@@ -1,14 +1,185 @@
 import streamlit as st
 import time
 import random
+import uuid
 from supabase_client import get_supabase_client
 
 supabase = get_supabase_client()
 
+def initialize_game(room_id, is_owner=False, username="Player"):
+    """
+    Initialize a game room, setting up Supabase subscriptions and player data.
+    
+    Args:
+        room_id (str): The unique room code.
+        is_owner (bool): Whether the user is the room owner.
+        username (str): The player's username.
+    """
+    st.session_state.room_id = room_id
+    st.session_state.is_room_owner = is_owner
+    st.session_state.username = username
+    st.session_state.in_game = True
+
+    try:
+        if not supabase:
+            st.error("Supabase client not initialized.")
+            st.session_state.in_game = False
+            return
+
+        # Check if room exists
+        room_data = supabase.table("rooms").select("*").eq("id", room_id).execute()
+
+        if not room_data.data and is_owner:
+            # Create new room
+            room_data = {
+                "id": room_id,
+                "owner_id": st.session_state.user_id,
+                "settings": {
+                    "difficulty": st.session_state.difficulty,
+                    "round_time": st.session_state.round_time,
+                    "max_rounds": st.session_state.max_rounds,
+                    "min_players": st.session_state.min_players
+                },
+                "game_state": {
+                    "status": "waiting",
+                    "current_round": 1,
+                    "rounds_played": 0,
+                    "current_word": "",
+                    "drawing_player_id": "",
+                    "timer_start": 0
+                },
+                "drawing_data": None
+            }
+            supabase.table("rooms").insert(room_data).execute()
+
+            # Add player to the room
+            player_data = {
+                "user_id": st.session_state.user_id,
+                "room_id": room_id,
+                "name": username,
+                "score": 0,
+                "color": random.choice(["#FF5722", "#E91E63", "#9C27B0", "#673AB7", "#3F51B5"]),
+                "avatar": username[0].upper(),
+                "last_seen": int(time.time())
+            }
+            supabase.table("players").insert(player_data).execute()
+
+            # Add system messages
+            system_messages = [
+                {
+                    "room_id": room_id,
+                    "message_data": {
+                        "type": "system",
+                        "content": f"Room created! Waiting for at least {st.session_state.min_players} players to join."
+                    }
+                },
+                {
+                    "room_id": room_id,
+                    "message_data": {
+                        "type": "system",
+                        "content": f"{username} has joined the room."
+                    }
+                }
+            ]
+            supabase.table("chat_messages").insert(system_messages).execute()
+
+        elif room_data.data and not is_owner:
+            # Join existing room
+            room = room_data.data[0]
+            player_color = random.choice(["#FF5722", "#E91E63", "#9C27B0", "#673AB7", "#3F51B5"])
+            player_data = {
+                "user_id": st.session_state.user_id,
+                "room_id": room_id,
+                "name": username,
+                "score": 0,
+                "color": player_color,
+                "avatar": username[0].upper(),
+                "last_seen": int(time.time())
+            }
+            supabase.table("players").insert(player_data).execute()
+
+            new_message = {
+                "room_id": room_id,
+                "message_data": {
+                    "type": "system",
+                    "content": f"{username} has joined the room."
+                }
+            }
+            supabase.table("chat_messages").insert(new_message).execute()
+
+            settings = room.get("settings", {})
+            st.session_state.difficulty = settings.get("difficulty", "medium")
+            st.session_state.round_time = settings.get("round_time", 60)
+            st.session_state.max_rounds = settings.get("max_rounds", 3)
+            st.session_state.min_players = settings.get("min_players", 2)
+            st.session_state.game_state = room.get("game_state", {}).get("status", "waiting")
+
+        elif not room_data.data and not is_owner:
+            st.error(f"Room {room_id} does not exist!")
+            st.session_state.in_game = False
+            return
+
+        st.session_state.game_initialized = True
+        st.session_state.subscription = setup_realtime_subscriptions(room_id)
+        sync_game_state()
+
+    except Exception as e:
+        st.error(f"Error initializing game: {e}")
+        st.session_state.in_game = False
+
+def setup_realtime_subscriptions(room_id):
+    """
+    Set up Supabase real-time subscriptions for the room.
+    """
+    def handle_broadcast(payload):
+        try:
+            event_type = payload.get("eventType")
+            table = payload.get("table")
+            if not event_type or not table:
+                return
+            if table in ["players", "chat_messages", "rooms"]:
+                sync_game_state()
+        except Exception as e:
+            st.error(f"Error handling real-time update: {e}")
+
+    try:
+        channel = f"room:{room_id}"
+        supabase.channel(channel).on(
+            "postgres_changes",
+            {
+                "event": "*",
+                "schema": "public",
+                "table": "players",
+                "filter": f"room_id=eq.{room_id}"
+            },
+            handle_broadcast
+        ).on(
+            "postgres_changes",
+            {
+                "event": "*",
+                "schema": "public",
+                "table": "chat_messages",
+                "filter": f"room_id=eq.{room_id}"
+            },
+            handle_broadcast
+        ).on(
+            "postgres_changes",
+            {
+                "event": "*",
+                "schema": "public",
+                "table": "rooms",
+                "filter": f"id=eq.{room_id}"
+            },
+            handle_broadcast
+        ).subscribe()
+        return channel
+    except Exception as e:
+        st.error(f"Error setting up real-time subscription: {e}")
+        return None
+
 def sync_game_state():
     """
-    Synchronize the local game state with the data stored in Supabase.
-    Updates room data, player data, and chat messages in the session state.
+    Synchronize the local game state with Supabase data.
     """
     if not st.session_state.in_game or not st.session_state.room_id:
         return
@@ -35,7 +206,7 @@ def sync_game_state():
             "room_id", st.session_state.room_id
         ).execute()
 
-        # Update players list, filtering out inactive ones
+        # Update players list
         st.session_state.players = [
             {
                 "id": player["user_id"],
@@ -45,7 +216,7 @@ def sync_game_state():
                 "avatar": player["avatar"]
             }
             for player in players_data.data
-            if time.time() - player["last_seen"] < 60  # Active within 60 seconds
+            if time.time() - player["last_seen"] < 60
         ]
         st.session_state.players = sorted(st.session_state.players, key=lambda x: x["score"], reverse=True)
 
@@ -66,7 +237,6 @@ def sync_game_state():
             st.session_state.rounds_played = game_state.get("rounds_played", 0)
             st.session_state.timer_start = game_state.get("timer_start", time.time())
 
-            # Sync drawing data for non-drawers
             is_drawing_player = st.session_state.players[st.session_state.drawing_player_index]["id"] == st.session_state.user_id
             if not is_drawing_player:
                 st.session_state.drawing_data = room.get("drawing_data")
@@ -84,7 +254,7 @@ def sync_game_state():
 
 def start_game():
     """
-    Start the game by setting up the first drawer and word. Only the room owner can start.
+    Start the game by selecting the first drawer and word.
     """
     if not st.session_state.is_room_owner:
         return
@@ -128,7 +298,7 @@ def start_game():
 
 def send_chat_message(content, is_correct=False):
     """
-    Send a chat message. If it's a correct guess, update scores and progress the game.
+    Send a chat message, handling correct guesses and score updates.
     """
     try:
         new_message = {
@@ -175,7 +345,7 @@ def send_chat_message(content, is_correct=False):
 
 def new_round():
     """
-    Start a new round with the next drawer and a new word. Only the room owner can initiate.
+    Start a new round with the next drawer and word.
     """
     if not st.session_state.is_room_owner:
         return
@@ -212,7 +382,7 @@ def new_round():
 
 def end_game():
     """
-    End the game and announce winners. Only the room owner can end it.
+    End the game and announce the winner.
     """
     if not st.session_state.is_room_owner:
         return
@@ -252,7 +422,7 @@ def end_game():
 
 def leave_game():
     """
-    Allow a player to leave the game, updating the room state and ownership if necessary.
+    Allow a player to leave the game, updating ownership if necessary.
     """
     if not st.session_state.in_game or not st.session_state.room_id:
         return
@@ -297,7 +467,7 @@ def leave_game():
 
 def update_difficulty(new_difficulty):
     """
-    Update the game difficulty setting. Only the room owner can change it.
+    Update the game difficulty.
     """
     if not st.session_state.is_room_owner or not st.session_state.in_game:
         return
@@ -327,7 +497,7 @@ def update_difficulty(new_difficulty):
 
 def update_min_players(new_min_players):
     """
-    Update the minimum number of players required. Only the room owner can change it.
+    Update the minimum number of players.
     """
     if not st.session_state.is_room_owner or not st.session_state.in_game:
         return
@@ -357,7 +527,7 @@ def update_min_players(new_min_players):
 
 def cleanup_inactive_players():
     """
-    Remove players inactive for over 60 seconds from the game.
+    Remove players inactive for over 60 seconds.
     """
     try:
         current_time = int(time.time())
