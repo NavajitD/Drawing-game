@@ -4,19 +4,22 @@ import random
 import uuid
 import asyncio
 import threading
+import logging
 from supabase_client import get_supabase_client, get_supabase_async_client
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 supabase = get_supabase_client()
 
 def initialize_game(room_id, is_owner=False, username="Player"):
     """
     Initialize a game room, setting up Supabase subscriptions and player data.
-    
-    Args:
-        room_id (str): The unique room code.
-        is_owner (bool): Whether the user is the room owner.
-        username (str): The player's username.
     """
+    start_time = time.time()
+    logger.info(f"Starting initialize_game for room {room_id}")
+
     st.session_state.room_id = room_id
     st.session_state.is_room_owner = is_owner
     st.session_state.username = username
@@ -29,10 +32,13 @@ def initialize_game(room_id, is_owner=False, username="Player"):
             return
 
         # Check if room exists
+        room_check_start = time.time()
         room_data = supabase.table("rooms").select("*").eq("id", room_id).execute()
+        logger.info(f"Room check took {time.time() - room_check_start:.2f} seconds")
 
         if not room_data.data and is_owner:
             # Create new room
+            room_insert_start = time.time()
             room_data = {
                 "id": room_id,
                 "owner_id": st.session_state.user_id,
@@ -53,8 +59,10 @@ def initialize_game(room_id, is_owner=False, username="Player"):
                 "drawing_data": None
             }
             supabase.table("rooms").insert(room_data).execute()
+            logger.info(f"Room insert took {time.time() - room_insert_start:.2f} seconds")
 
             # Add player to the room
+            player_insert_start = time.time()
             player_data = {
                 "user_id": st.session_state.user_id,
                 "room_id": room_id,
@@ -65,8 +73,10 @@ def initialize_game(room_id, is_owner=False, username="Player"):
                 "last_seen": int(time.time())
             }
             supabase.table("players").insert(player_data).execute()
+            logger.info(f"Player insert took {time.time() - player_insert_start:.2f} seconds")
 
             # Add system messages
+            message_insert_start = time.time()
             system_messages = [
                 {
                     "room_id": room_id,
@@ -84,9 +94,11 @@ def initialize_game(room_id, is_owner=False, username="Player"):
                 }
             ]
             supabase.table("chat_messages").insert(system_messages).execute()
+            logger.info(f"Message insert took {time.time() - message_insert_start:.2f} seconds")
 
         elif room_data.data and not is_owner:
             # Join existing room
+            join_start = time.time()
             room = room_data.data[0]
             player_color = random.choice(["#FF5722", "#E91E63", "#9C27B0", "#673AB7", "#3F51B5"])
             player_data = {
@@ -115,6 +127,7 @@ def initialize_game(room_id, is_owner=False, username="Player"):
             st.session_state.max_rounds = settings.get("max_rounds", 3)
             st.session_state.min_players = settings.get("min_players", 2)
             st.session_state.game_state = room.get("game_state", {}).get("status", "waiting")
+            logger.info(f"Join room took {time.time() - join_start:.2f} seconds")
 
         elif not room_data.data and not is_owner:
             st.error(f"Room {room_id} does not exist!")
@@ -122,15 +135,20 @@ def initialize_game(room_id, is_owner=False, username="Player"):
             return
 
         st.session_state.game_initialized = True
-        # Start real-time subscriptions in a separate thread
+        # Start real-time subscriptions
+        subscription_start = time.time()
         subscription_thread = threading.Thread(target=start_realtime_subscriptions, args=(room_id,))
         subscription_thread.daemon = True
         subscription_thread.start()
+        logger.info(f"Subscription thread started in {time.time() - subscription_start:.2f} seconds")
         sync_game_state()
+
+        logger.info(f"Total initialize_game took {time.time() - start_time:.2f} seconds")
 
     except Exception as e:
         st.error(f"Error initializing game: {e}")
         st.session_state.in_game = False
+        logger.error(f"Error in initialize_game: {e}")
 
 def start_realtime_subscriptions(room_id):
     """
@@ -138,6 +156,7 @@ def start_realtime_subscriptions(room_id):
     """
     async def setup_async_subscriptions():
         async_client = get_supabase_async_client()
+        subscription_start = time.time()
         try:
             channel = async_client.channel(f"room:{room_id}")
             channel.on(
@@ -170,12 +189,13 @@ def start_realtime_subscriptions(room_id):
             )
             await channel.subscribe()
             st.session_state.subscription = channel
-            # Keep the event loop running
+            logger.info(f"Real-time subscription setup took {time.time() - subscription_start:.2f} seconds")
             while True:
                 await asyncio.sleep(1)
         except Exception as e:
             st.error(f"Error setting up real-time subscription: {e}")
             st.session_state.subscription = None
+            logger.error(f"Error in real-time subscription: {e}")
 
     # Run the async function in an event loop
     loop = asyncio.new_event_loop()
@@ -190,6 +210,7 @@ def sync_game_state():
     if not st.session_state.in_game or not st.session_state.room_id:
         return
 
+    sync_start = time.time()
     try:
         # Update player's last seen timestamp
         supabase.table("players").update(
@@ -255,10 +276,11 @@ def sync_game_state():
         ).execute()
         st.session_state.chat_messages = [msg["message_data"] for msg in chat_data.data]
 
-        # Trigger UI update
+        logger.info(f"sync_game_state took {time.time() - sync_start:.2f} seconds")
         st.experimental_rerun()
     except Exception as e:
         st.error(f"Error syncing with Supabase: {e}")
+        logger.error(f"Error in sync_game_state: {e}")
 
 def start_game():
     """
