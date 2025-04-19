@@ -1,5 +1,6 @@
 import streamlit as st
 import random
+from game_logic import initialize_game  # Add this import
 
 def render_join_create_screen():
     """
