@@ -1,11 +1,19 @@
 import streamlit as st
 import random
 import time
+import os
 from supabase_client import get_supabase_client
-from game_logic import (sync_game_state, initialize_game, start_game, send_chat_message, 
-                       new_round, end_game, leave_game, update_difficulty, update_min_players, cleanup_inactive_players)
+from game_logic import (
+    sync_game_state, initialize_game, start_game, send_chat_message,
+    new_round, end_game, leave_game, update_difficulty, update_min_players,
+    cleanup_inactive_players
+)
 from ui_components import render_join_create_screen, render_game_interface
 from utils import get_val_or_default
+
+# Debug: Print directory contents
+print("Current directory:", os.getcwd())
+print("Files in directory:", os.listdir('.'))
 
 # Set page config
 st.set_page_config(
@@ -15,71 +23,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS with enhancements
+# Custom CSS (simplified for brevity)
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;500;600;700&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=Paytone+One&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@300;400;500;600;700&display=swap');
-    
-    :root {
-        --background-color: #f2f2f2;
-        --text-color: #333;
-        --card-bg: white;
-        --primary-color: #ff7b3b;
-        --secondary-color: #4b6fff;
-        --chat-bg: white;
-        --timer-bg: #ddd;
-    }
-    
-    @media (prefers-color-scheme: dark) {
-        :root {
-            --background-color: #121212;
-            --text-color: #e6e6e6;
-            --card-bg: #1e1e1e;
-            --primary-color: #ff9d5c;
-            --secondary-color: #7c89ff;
-            --chat-bg: #1e1e1e;
-            --timer-bg: #333;
-        }
-    }
-    
-    .logo {
-        font-family: 'Paytone One', sans-serif;
-        font-size: 42px;
-        background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    
-    .timer-bar {
-        height: 100%;
-        background: linear-gradient(to right, #4CAF50, #FFC107, #FF5722);
-        transition: width 1s linear;
-    }
-    
-    .chat-container {
-        height: 350px;
-        overflow-y: auto;
-        background-color: var(--chat-bg);
-        border-radius: 12px;
-        padding: 15px;
-    }
-    
-    .leaderboard {
-        animation: fadeIn 0.5s ease;
-        background-color: var(--card-bg);
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.1);
-    }
-    
-    @keyframes pulse {
-        0% { box-shadow: 0 0 0 0 rgba(255, 123, 59, 0.4); }
-        70% { box-shadow: 0 0 0 10px rgba(255, 123, 59, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(255, 123, 59, 0); }
-    }
+    .logo { font-family: 'Arial', sans-serif; font-size: 42px; color: #ff7b3b; }
+    .chat-container { height: 350px; overflow-y: auto; background: white; border-radius: 12px; padding: 15px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -94,7 +42,7 @@ if 'initialized' not in st.session_state:
         "medium": ["airplane", "birthday", "computer"],
         "hard": ["skyscraper", "electricity", "photosynthesis"]
     }
-    st.session_state.user_id = str(random.randint(1000, 9999))  # Simplified for demo
+    st.session_state.user_id = str(random.randint(1000, 9999))
     st.session_state.username = None
     st.session_state.room_id = None
     st.session_state.is_room_owner = False
@@ -116,7 +64,7 @@ def periodic_tasks():
         sync_game_state()
         if st.session_state.is_room_owner:
             cleanup_inactive_players()
-    time.sleep(1)  # Simplified; in practice, use Streamlit's rerun
+    # Note: Streamlit doesn't support sleep in production; rely on rerun
     st.experimental_rerun()
 
 # Main app logic
