@@ -143,8 +143,9 @@ def setup_realtime_subscriptions(room_id):
             st.error(f"Error handling real-time update: {e}")
 
     try:
-        channel = f"room:{room_id}"
-        supabase.channel(channel).on(
+        # Updated real-time subscription syntax for newer Supabase versions
+        channel = supabase.realtime.channel(f"room:{room_id}")
+        channel.on(
             "postgres_changes",
             {
                 "event": "*",
