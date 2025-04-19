@@ -2,7 +2,9 @@ import streamlit as st
 import time
 import random
 import uuid
-from supabase_client import get_supabase_client
+import asyncio
+import threading
+from supabase_client import get_supabase_client, get_supabase_async_client
 
 supabase = get_supabase_client()
 
@@ -120,63 +122,66 @@ def initialize_game(room_id, is_owner=False, username="Player"):
             return
 
         st.session_state.game_initialized = True
-        st.session_state.subscription = setup_realtime_subscriptions(room_id)
+        # Start real-time subscriptions in a separate thread
+        subscription_thread = threading.Thread(target=start_realtime_subscriptions, args=(room_id,))
+        subscription_thread.daemon = True
+        subscription_thread.start()
         sync_game_state()
 
     except Exception as e:
         st.error(f"Error initializing game: {e}")
         st.session_state.in_game = False
 
-def setup_realtime_subscriptions(room_id):
+def start_realtime_subscriptions(room_id):
     """
-    Set up Supabase real-time subscriptions for the room.
+    Run async real-time subscriptions in a separate thread.
     """
-    def handle_broadcast(payload):
+    async def setup_async_subscriptions():
+        async_client = get_supabase_async_client()
         try:
-            event_type = payload.get("eventType")
-            table = payload.get("table")
-            if not event_type or not table:
-                return
-            if table in ["players", "chat_messages", "rooms"]:
-                sync_game_state()
+            channel = async_client.channel(f"room:{room_id}")
+            channel.on(
+                "postgres_changes",
+                {
+                    "event": "*",
+                    "schema": "public",
+                    "table": "players",
+                    "filter": f"room_id=eq.{room_id}"
+                },
+                lambda payload: sync_game_state()
+            ).on(
+                "postgres_changes",
+                {
+                    "event": "*",
+                    "schema": "public",
+                    "table": "chat_messages",
+                    "filter": f"room_id=eq.{room_id}"
+                },
+                lambda payload: sync_game_state()
+            ).on(
+                "postgres_changes",
+                {
+                    "event": "*",
+                    "schema": "public",
+                    "table": "rooms",
+                    "filter": f"id=eq.{room_id}"
+                },
+                lambda payload: sync_game_state()
+            )
+            await channel.subscribe()
+            st.session_state.subscription = channel
+            # Keep the event loop running
+            while True:
+                await asyncio.sleep(1)
         except Exception as e:
-            st.error(f"Error handling real-time update: {e}")
+            st.error(f"Error setting up real-time subscription: {e}")
+            st.session_state.subscription = None
 
-    try:
-        # Updated real-time subscription syntax for newer Supabase versions
-        channel = supabase.realtime.channel(f"room:{room_id}")
-        channel.on(
-            "postgres_changes",
-            {
-                "event": "*",
-                "schema": "public",
-                "table": "players",
-                "filter": f"room_id=eq.{room_id}"
-            },
-            handle_broadcast
-        ).on(
-            "postgres_changes",
-            {
-                "event": "*",
-                "schema": "public",
-                "table": "chat_messages",
-                "filter": f"room_id=eq.{room_id}"
-            },
-            handle_broadcast
-        ).on(
-            "postgres_changes",
-            {
-                "event": "*",
-                "schema": "public",
-                "table": "rooms",
-                "filter": f"id=eq.{room_id}"
-            },
-            handle_broadcast
-        ).subscribe()
-        return channel
-    except Exception as e:
-        st.error(f"Error setting up real-time subscription: {e}")
-        return None
+    # Run the async function in an event loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(setup_async_subscriptions())
+    loop.close()
 
 def sync_game_state():
     """
@@ -250,6 +255,8 @@ def sync_game_state():
         ).execute()
         st.session_state.chat_messages = [msg["message_data"] for msg in chat_data.data]
 
+        # Trigger UI update
+        st.experimental_rerun()
     except Exception as e:
         st.error(f"Error syncing with Supabase: {e}")
 
