@@ -7,7 +7,6 @@ import threading
 import logging
 from supabase_client import get_supabase_client, get_supabase_async_client
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -24,6 +23,7 @@ def initialize_game(room_id, is_owner=False, username="Player"):
     st.session_state.is_room_owner = is_owner
     st.session_state.username = username
     st.session_state.in_game = True
+    st.session_state.subscription = None  # Initialize subscription state
 
     try:
         if not supabase:
@@ -135,15 +135,16 @@ def initialize_game(room_id, is_owner=False, username="Player"):
             return
 
         st.session_state.game_initialized = True
-        # Start real-time subscriptions
-        subscription_start = time.time()
-        subscription_thread = threading.Thread(target=start_realtime_subscriptions, args=(room_id,))
-        subscription_thread.daemon = True
-        subscription_thread.start()
-        logger.info(f"Subscription thread started in {time.time() - subscription_start:.2f} seconds")
         sync_game_state()
-
         logger.info(f"Total initialize_game took {time.time() - start_time:.2f} seconds")
+
+        # Add button to start subscriptions manually for testing
+        if st.button("Start Real-Time Subscriptions"):
+            subscription_start = time.time()
+            subscription_thread = threading.Thread(target=start_realtime_subscriptions, args=(room_id,))
+            subscription_thread.daemon = True
+            subscription_thread.start()
+            logger.info(f"Subscription thread started in {time.time() - subscription_start:.2f} seconds")
 
     except Exception as e:
         st.error(f"Error initializing game: {e}")
@@ -197,7 +198,6 @@ def start_realtime_subscriptions(room_id):
             st.session_state.subscription = None
             logger.error(f"Error in real-time subscription: {e}")
 
-    # Run the async function in an event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(setup_async_subscriptions())
