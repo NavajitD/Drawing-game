@@ -2,33 +2,23 @@ import os
 import logging
 from supabase import create_client, Client
 
-# Optional dotenv import for local testing
-try:
-    from dotenv import load_dotenv
-    load_dotenv()  # Load .env file if available
-except ImportError:
-    pass  # Skip if python-dotenv is not installed (e.g., Streamlit Cloud)
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_supabase_client() -> Client:
+def get_supabase_client(url: str, anon_key: str) -> Client:
     """
-    Initialize and return a Supabase client.
+    Initialize and return a Supabase client with provided credentials.
     """
     try:
-        url = os.getenv("https://uryjwtrupvqvpnsbbemx.supabase.co")
-        anon_key = os.getenv("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVyeWp3dHJ1cHZxdnBuc2JiZW14Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUxMzAyMTEsImV4cCI6MjA2MDcwNjIxMX0.fz3EQrDwtoC74GHzCsygdt1ORV66siAQMRamjpU4I1U")
-        
         logger.info(f"SUPABASE_URL: {url}")
-        logger.info(f"SUPABASE_ANON_KEY: {anon_key[:10]}..." if anon_key else "SUPABASE_ANON_KEY: None")
+        logger.info(f"SUPABASE_ANON_KEY: {anon_key[:10]}...")
         
         if not url:
-            logger.error("SUPABASE_URL is not set in environment variables")
-            raise ValueError("SUPABASE_URL is not set")
+            logger.error("SUPABASE_URL is empty")
+            raise ValueError("SUPABASE_URL is empty")
         if not anon_key:
-            logger.error("SUPABASE_ANON_KEY is not set in environment variables")
-            raise ValueError("SUPABASE_ANON_KEY is not set")
+            logger.error("SUPABASE_ANON_KEY is empty")
+            raise ValueError("SUPABASE_ANON_KEY is empty")
         
         logger.info(f"Initializing Supabase client with URL: {url}")
         client = create_client(url, anon_key)
