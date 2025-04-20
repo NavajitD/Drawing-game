@@ -1,6 +1,8 @@
 import streamlit as st
 import os
 import uuid
+import string
+import random
 from supabase_client import get_supabase_client
 from game_logic import initialize_game, sync_game_state, start_game, send_chat_message, leave_game, update_difficulty, update_min_players
 from ui_components import render_game_ui  # Handles canvas, chat, players
@@ -28,6 +30,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# Function to generate unique room code
+def generate_room_code(length=6):
+    characters = string.ascii_uppercase + string.digits
+    return ''.join(random.choice(characters) for _ in range(length))
+
 # Initialize session state
 if "user_id" not in st.session_state:
     st.session_state.user_id = str(uuid.uuid4())
@@ -50,7 +57,9 @@ if "word_lists" not in st.session_state:
 if "drawing_data" not in st.session_state:
     st.session_state.drawing_data = None
 if "drawing_player_index" not in st.session_state:
-    st.session_state.drawing_player_index = None  # Initialize drawing_player_index
+    st.session_state.drawing_player_index = None
+if "hidden_word" not in st.session_state:
+    st.session_state.hidden_word = ""  # Initialize hidden_word
 
 # Debug environment variables (temporary)
 st.write("SUPABASE_URL:", os.getenv("SUPABASE_URL"))
@@ -73,19 +82,30 @@ st.title("That Drawing Game")
 if not st.session_state.in_game:
     with st.form("join_form"):
         username = st.text_input("Enter your username", value="Player")
-        room_id = st.text_input("Enter room ID or create a new one")
-        is_owner = st.checkbox("Create new room")
+        action = st.radio("Choose an action", ["Join Room", "Create New Room"])
+        room_id = st.text_input("Enter room ID", disabled=action == "Create New Room")
         difficulty = st.selectbox("Difficulty", ["easy", "medium", "hard"], index=["easy", "medium", "hard"].index(st.session_state.difficulty))
         min_players = st.number_input("Minimum players", min_value=2, max_value=10, value=st.session_state.min_players)
-        submit = st.form_submit_button("Join/Create Room")
+        submit = st.form_submit_button("Submit")
         
         if submit:
-            if username and room_id:
+            if username:
+                if action == "Create New Room":
+                    room_id = generate_room_code()
+                    while supabase.table("rooms").select("id").eq("id", room_id).execute().data:
+                        room_id = generate_room_code()  # Ensure unique room ID
+                    is_owner = True
+                else:
+                    if not room_id:
+                        st.error("Please enter a room ID")
+                        st.stop()
+                    is_owner = False
+                
                 st.session_state.difficulty = difficulty
                 st.session_state.min_players = min_players
                 initialize_game(supabase, room_id, is_owner, username)
             else:
-                st.error("Please enter a username and room ID")
+                st.error("Please enter a username")
 else:
     sync_game_state(supabase)
     st.write("Rendering game UI, in_game:", st.session_state.in_game, "game_state:", st.session_state.game_state)
