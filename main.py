@@ -5,6 +5,9 @@ from supabase_client import get_supabase_client
 from game_logic import initialize_game, sync_game_state, start_game, send_chat_message, leave_game, update_difficulty, update_min_players
 from ui_components import render_game_ui  # Handles canvas, chat, players
 
+# Disable pages watcher
+os.environ["STREAMLIT_SERVER_ENABLE_STATIC_SERVING"] = "false"
+
 # Set page config first
 st.set_page_config(
     page_title="That Drawing Game",
@@ -69,7 +72,9 @@ if not st.session_state.in_game:
                 st.error("Please enter a username and room ID")
 else:
     sync_game_state(supabase)
+    st.write("Rendering game UI, in_game:", st.session_state.in_game, "game_state:", st.session_state.game_state)
     render_game_ui(supabase)  # Pass supabase to render_game_ui
+    
     # Game controls
     col1, col2 = st.columns(2)
     with col1:
