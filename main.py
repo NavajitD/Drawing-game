@@ -3,7 +3,7 @@ import os
 import uuid
 from supabase_client import get_supabase_client
 from game_logic import initialize_game, sync_game_state, start_game, send_chat_message, leave_game, update_difficulty, update_min_players
-from ui_components import render_game_ui  # Assuming this handles canvas, chat, etc.
+from ui_components import render_game_ui  # Handles canvas, chat, players
 
 # Set page config first
 st.set_page_config(
@@ -12,9 +12,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
-
-st.write("SUPABASE_URL:", os.getenv("SUPABASE_URL"))
-st.write("SUPABASE_ANON_KEY:", os.getenv("SUPABASE_ANON_KEY"))
 
 # Initialize session state
 if "user_id" not in st.session_state:
@@ -45,8 +42,9 @@ except ValueError as e:
     st.error(f"Failed to connect to database: {e}")
 
 # Debug environment variables (temporary)
-st.write("SUPABASE_URL:", os.getenv("SUPABASE_URL"))
-st.write("SUPABASE_ANON_KEY:", os.getenv("SUPABASE_ANON_KEY")[:10] + "..." if os.getenv("SUPABASE_ANON_KEY") else None)
+if supabase is None:
+    st.write("SUPABASE_URL:", os.getenv("SUPABASE_URL"))
+    st.write("SUPABASE_ANON_KEY:", os.getenv("SUPABASE_ANON_KEY")[:10] + "..." if os.getenv("SUPABASE_ANON_KEY") else None)
 
 # Main app logic
 st.title("That Drawing Game")
@@ -91,3 +89,7 @@ else:
                     update_difficulty(new_difficulty)
                 if new_min_players != st.session_state.min_players:
                     update_min_players(new_min_players)
+
+# Debug: List files
+if os.getenv("STREAMLIT_ENV") == "development":
+    st.write("Files in directory:", os.listdir('.'))
