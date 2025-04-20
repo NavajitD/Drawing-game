@@ -25,6 +25,7 @@ def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"
     st.session_state.username = username
     st.session_state.in_game = True
     st.session_state.last_sync = 0
+    st.session_state.drawing_data = None  # Initialize drawing_data
 
     try:
         # Check if room exists
@@ -126,6 +127,7 @@ def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"
             st.session_state.max_rounds = settings.get("max_rounds", 3)
             st.session_state.min_players = settings.get("min_players", 2)
             st.session_state.game_state = room.get("game_state", {}).get("status", "waiting")
+            st.session_state.drawing_data = room.get("drawing_data", None)
             logger.info(f"Join room took {time.time() - join_start:.2f} seconds")
 
         elif not room.data and not is_owner:
@@ -201,7 +203,9 @@ def sync_game_state(supabase: Client):
 
             is_drawing_player = st.session_state.players[st.session_state.drawing_player_index]["id"] == st.session_state.user_id
             if not is_drawing_player:
-                st.session_state.drawing_data = room.get("drawing_data")
+                st.session_state.drawing_data = room.get("drawing_data", None)
+            else:
+                st.session_state.drawing_data = None  # Drawer doesn't need initial drawing
 
         # Sync chat messages
         chat_data = supabase.table("chat_messages").select("message_data").eq("room_id", st.session_state.room_id).order("created_at").limit(50).execute()
@@ -255,6 +259,7 @@ def start_game(supabase: Client):
         st.session_state.current_word = selected_word
         st.session_state.hidden_word = "_ " * len(selected_word)
         st.session_state.timer_start = time.time()
+        st.session_state.drawing_data = None  # Reset drawing_data on game start
 
     except Exception as e:
         st.error(f"Error starting game: {e}")
@@ -340,6 +345,8 @@ def new_round(supabase: Client):
         }
         supabase.table("chat_messages").insert(new_message).execute()
 
+        st.session_state.drawing_data = None  # Reset drawing_data for new round
+
     except Exception as e:
         st.error(f"Error starting new round: {e}")
         logger.error(f"Error starting new round: {e}")
@@ -378,6 +385,7 @@ def end_game(supabase: Client):
         supabase.table("chat_messages").insert([game_over_message, winner_message]).execute()
 
         st.session_state.game_state = "game_over"
+        st.session_state.drawing_data = None  # Reset drawing_data on game end
 
     except Exception as e:
         st.error(f"Error ending game: {e}")
@@ -418,6 +426,7 @@ def leave_game(supabase: Client):
 
         st.session_state.in_game = False
         st.session_state.game_initialized = False
+        st.session_state.drawing_data = None  # Reset drawing_data on leave
 
     except Exception as e:
         st.error(f"Error leaving game: {e}")
