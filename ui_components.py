@@ -1,7 +1,8 @@
 import streamlit as st
 from streamlit_drawable_canvas import st_canvas
+from supabase import Client
 
-def render_game_ui():
+def render_game_ui(supabase: Client):
     """
     Render the game UI with drawing canvas, chat, and player list.
     """
@@ -52,5 +53,6 @@ def render_game_ui():
     chat_input = st.text_input("Send a message", key=f"chat_{st.session_state.room_id}")
     if st.button("Send"):
         if chat_input:
+            from game_logic import send_chat_message
             is_correct = chat_input.lower() == st.session_state.current_word.lower()
-            send_chat_message(chat_input, is_correct)
+            send_chat_message(supabase, chat_input, is_correct)
