@@ -3,14 +3,12 @@ import time
 import random
 import uuid
 import logging
+from supabase import Client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Supabase client set in main.py
-supabase = None
-
-def initialize_game(room_id, is_owner=False, username="Player"):
+def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"):
     """
     Initialize a game room with Supabase.
     """
@@ -136,7 +134,7 @@ def initialize_game(room_id, is_owner=False, username="Player"):
             return
 
         st.session_state.game_initialized = True
-        sync_game_state()
+        sync_game_state(supabase)
         logger.info(f"Total initialize_game took {time.time() - start_time:.2f} seconds")
 
     except Exception as e:
@@ -144,7 +142,7 @@ def initialize_game(room_id, is_owner=False, username="Player"):
         st.session_state.in_game = False
         logger.error(f"Error in initialize_game: {e}")
 
-def sync_game_state():
+def sync_game_state(supabase: Client):
     """
     Synchronize the local game state with Supabase data via polling.
     """
@@ -216,7 +214,7 @@ def sync_game_state():
         st.error(f"Error syncing with Supabase: {e}")
         logger.error(f"Error in sync_game_state: {e}")
 
-def start_game():
+def start_game(supabase: Client):
     """
     Start the game by selecting the first drawer and word.
     """
@@ -262,7 +260,7 @@ def start_game():
         st.error(f"Error starting game: {e}")
         logger.error(f"Error starting game: {e}")
 
-def send_chat_message(content, is_correct=False):
+def send_chat_message(supabase: Client, content, is_correct=False):
     """
     Send a chat message, handling correct guesses and score updates.
     """
@@ -299,15 +297,15 @@ def send_chat_message(content, is_correct=False):
             supabase.table("chat_messages").insert(word_message).execute()
 
             if st.session_state.rounds_played + 1 >= st.session_state.max_rounds:
-                end_game()
+                end_game(supabase)
             else:
-                new_round()
+                new_round(supabase)
 
     except Exception as e:
         st.error(f"Error sending message: {e}")
         logger.error(f"Error sending message: {e}")
 
-def new_round():
+def new_round(supabase: Client):
     """
     Start a new round with the next drawer and word.
     """
@@ -346,7 +344,7 @@ def new_round():
         st.error(f"Error starting new round: {e}")
         logger.error(f"Error starting new round: {e}")
 
-def end_game():
+def end_game(supabase: Client):
     """
     End the game and announce the winner.
     """
@@ -385,7 +383,7 @@ def end_game():
         st.error(f"Error ending game: {e}")
         logger.error(f"Error ending game: {e}")
 
-def leave_game():
+def leave_game(supabase: Client):
     """
     Allow a player to leave the game, updating ownership if necessary.
     """
@@ -427,7 +425,7 @@ def leave_game():
         st.session_state.in_game = False
         st.session_state.game_initialized = False
 
-def update_difficulty(new_difficulty):
+def update_difficulty(supabase: Client, new_difficulty):
     """
     Update the game difficulty.
     """
@@ -456,7 +454,7 @@ def update_difficulty(new_difficulty):
         st.error(f"Error updating difficulty: {e}")
         logger.error(f"Error updating difficulty: {e}")
 
-def update_min_players(new_min_players):
+def update_min_players(supabase: Client, new_min_players):
     """
     Update the minimum number of players.
     """
@@ -485,7 +483,7 @@ def update_min_players(new_min_players):
         st.error(f"Error updating minimum players: {e}")
         logger.error(f"Error updating minimum players: {e}")
 
-def cleanup_inactive_players():
+def cleanup_inactive_players(supabase: Client):
     """
     Remove players inactive for over 60 seconds.
     """
