@@ -5,12 +5,12 @@ import string
 import random
 from supabase_client import get_supabase_client
 from game_logic import initialize_game, sync_game_state, start_game, send_chat_message, leave_game, update_difficulty, update_min_players
-from ui_components import render_game_ui  # Handles canvas, chat, players
+from ui_components import render_game_ui
 
 # Disable pages watcher
 os.environ["STREAMLIT_SERVER_ENABLE_STATIC_SERVING"] = "false"
 
-# Set page config first
+# Set page config
 st.set_page_config(
     page_title="That Drawing Game",
     page_icon="✏️",
@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Apply custom CSS for Skribbl.io-like styling
+# Apply Skribbl.io-style CSS
 st.markdown("""
     <style>
     body { background-color: #F0F0F0; color: #333333; font-family: 'Arial', sans-serif; }
@@ -30,7 +30,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Function to generate unique room code
+# Generate unique room code
 def generate_room_code(length=6):
     characters = string.ascii_uppercase + string.digits
     return ''.join(random.choice(characters) for _ in range(length))
@@ -50,18 +50,24 @@ if "min_players" not in st.session_state:
     st.session_state.min_players = 2
 if "word_lists" not in st.session_state:
     st.session_state.word_lists = {
-        "easy": ["cat", "dog", "tree"],
-        "medium": ["house", "car", "boat"],
-        "hard": ["airplane", "mountain", "castle"]
+        "easy": ["cat", "dog", "tree", "sun", "book"],
+        "medium": ["house", "car", "boat", "chair", "lamp"],
+        "hard": ["airplane", "mountain", "castle", "volcano", "bridge"]
     }
 if "drawing_data" not in st.session_state:
     st.session_state.drawing_data = None
 if "drawing_player_index" not in st.session_state:
     st.session_state.drawing_player_index = None
 if "hidden_word" not in st.session_state:
-    st.session_state.hidden_word = ""  # Initialize hidden_word
+    st.session_state.hidden_word = ""
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = []
+if "word_options" not in st.session_state:
+    st.session_state.word_options = []
+if "current_word" not in st.session_state:
+    st.session_state.current_word = ""
 
-# Debug environment variables (temporary)
+# Debug environment variables
 st.write("SUPABASE_URL:", os.getenv("SUPABASE_URL"))
 st.write("SUPABASE_ANON_KEY:", os.getenv("SUPABASE_ANON_KEY")[:10] + "..." if os.getenv("SUPABASE_ANON_KEY") else None)
 
@@ -93,7 +99,7 @@ if not st.session_state.in_game:
                 if action == "Create New Room":
                     room_id = generate_room_code()
                     while supabase.table("rooms").select("id").eq("id", room_id).execute().data:
-                        room_id = generate_room_code()  # Ensure unique room ID
+                        room_id = generate_room_code()
                     is_owner = True
                 else:
                     if not room_id:
@@ -109,14 +115,17 @@ if not st.session_state.in_game:
 else:
     sync_game_state(supabase)
     st.write("Rendering game UI, in_game:", st.session_state.in_game, "game_state:", st.session_state.game_state)
-    render_game_ui(supabase)  # Pass supabase to render_game_ui
+    render_game_ui(supabase)
     
     # Game controls
     col1, col2 = st.columns(2)
     with col1:
         if st.session_state.is_room_owner and st.session_state.game_state == "waiting":
-            if st.button("Start Game"):
-                start_game(supabase)
+            if len(st.session_state.players) >= st.session_state.min_players:
+                if st.button("Start Game"):
+                    start_game(supabase)
+            else:
+                st.write(f"Need at least {st.session_state.min_players} players to start!")
     with col2:
         if st.button("Leave Game"):
             leave_game(supabase)
