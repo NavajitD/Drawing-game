@@ -12,6 +12,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+st.write("SUPABASE_URL:", os.getenv("SUPABASE_URL"))
+st.write("SUPABASE_ANON_KEY:", os.getenv("SUPABASE_ANON_KEY"))
+
 # Initialize session state
 if "user_id" not in st.session_state:
     st.session_state.user_id = str(uuid.uuid4())
