@@ -26,7 +26,8 @@ def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"
     st.session_state.in_game = True
     st.session_state.last_sync = 0
     st.session_state.drawing_data = None
-    st.session_state.drawing_player_index = None  # Initialize drawing_player_index
+    st.session_state.drawing_player_index = None
+    st.session_state.hidden_word = ""  # Initialize hidden_word
 
     try:
         # Check if room exists
@@ -82,7 +83,7 @@ def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"
                     "room_id": room_id,
                     "message_data": {
                         "type": "system",
-                        "content": f"Room created! Waiting for at least {st.session_state.min_players} players to join."
+                        "content": f"Room {room_id} created! Waiting for at least {st.session_state.min_players} players to join."
                     }
                 },
                 {
@@ -129,7 +130,8 @@ def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"
             st.session_state.min_players = settings.get("min_players", 2)
             st.session_state.game_state = room.get("game_state", {}).get("status", "waiting")
             st.session_state.drawing_data = room.get("drawing_data", None)
-            st.session_state.drawing_player_index = None  # Set to None for waiting state
+            st.session_state.drawing_player_index = None
+            st.session_state.hidden_word = ""
             logger.info(f"Join room took {time.time() - join_start:.2f} seconds")
 
         elif not room.data and not is_owner:
@@ -211,7 +213,7 @@ def sync_game_state(supabase: Client):
                 else:
                     st.session_state.drawing_data = None  # Drawer doesn't need initial drawing
         else:
-            st.session_state.drawing_player_index = None  # No drawer in waiting state
+            st.session_state.drawing_player_index = None
             st.session_state.drawing_data = None
             st.session_state.current_word = ""
             st.session_state.hidden_word = ""
@@ -271,7 +273,7 @@ def start_game(supabase: Client):
         st.session_state.current_word = selected_word
         st.session_state.hidden_word = "_ " * len(selected_word)
         st.session_state.timer_start = time.time()
-        st.session_state.drawing_data = None  # Reset drawing_data on game start
+        st.session_state.drawing_data = None
 
     except Exception as e:
         st.error(f"Error starting game: {e}")
@@ -357,8 +359,10 @@ def new_round(supabase: Client):
         }
         supabase.table("chat_messages").insert(new_message).execute()
 
-        st.session_state.drawing_data = None  # Reset drawing_data for new round
+        st.session_state.drawing_data = None
         st.session_state.drawing_player_index = next_index
+        st.session_state.current_word = new_word
+        st.session_state.hidden_word = "_ " * len(new_word)
 
     except Exception as e:
         st.error(f"Error starting new round: {e}")
@@ -398,8 +402,9 @@ def end_game(supabase: Client):
         supabase.table("chat_messages").insert([game_over_message, winner_message]).execute()
 
         st.session_state.game_state = "game_over"
-        st.session_state.drawing_data = None  # Reset drawing_data on game end
-        st.session_state.drawing_player_index = None  # Reset drawing_player_index
+        st.session_state.drawing_data = None
+        st.session_state.drawing_player_index = None
+        st.session_state.hidden_word = ""
 
     except Exception as e:
         st.error(f"Error ending game: {e}")
@@ -440,8 +445,9 @@ def leave_game(supabase: Client):
 
         st.session_state.in_game = False
         st.session_state.game_initialized = False
-        st.session_state.drawing_data = None  # Reset drawing_data on leave
-        st.session_state.drawing_player_index = None  # Reset drawing_player_index
+        st.session_state.drawing_data = None
+        st.session_state.drawing_player_index = None
+        st.session_state.hidden_word = ""
 
     except Exception as e:
         st.error(f"Error leaving game: {e}")
