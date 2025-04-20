@@ -3,12 +3,11 @@ import time
 import random
 import uuid
 import logging
-from supabase_client import get_supabase_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Supabase client initialized in main.py
+# Supabase client set in main.py
 supabase = None
 
 def initialize_game(room_id, is_owner=False, username="Player"):
