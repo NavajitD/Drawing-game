@@ -23,17 +23,19 @@ def render_game_ui(supabase: Client):
         if canvas_result.json_data:
             supabase.table("rooms").update({"drawing_data": canvas_result.json_data}).eq("id", st.session_state.room_id).execute()
     else:
-        st_canvas(
-            fill_color="rgba(255, 165, 0, 0.3)",
-            stroke_width=2,
-            stroke_color="#000000",
-            background_color="#ffffff",
-            height=400,
-            width=600,
-            drawing_mode="view",
-            initial_drawing=st.session_state.drawing_data,
-            key=f"canvas_{st.session_state.room_id}_view"
-        )
+        canvas_kwargs = {
+            "fill_color": "rgba(255, 165, 0, 0.3)",
+            "stroke_width": 2,
+            "stroke_color": "#000000",
+            "background_color": "#ffffff",
+            "height": 400,
+            "width": 600,
+            "drawing_mode": "view",
+            "key": f"canvas_{st.session_state.room_id}_view"
+        }
+        if st.session_state.drawing_data:
+            canvas_kwargs["initial_drawing"] = st.session_state.drawing_data
+        st_canvas(**canvas_kwargs)
     
     # Player list
     st.subheader("Players")
