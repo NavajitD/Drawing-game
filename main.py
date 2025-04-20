@@ -35,6 +35,8 @@ if "word_lists" not in st.session_state:
         "medium": ["house", "car", "boat"],
         "hard": ["airplane", "mountain", "castle"]
     }
+if "drawing_data" not in st.session_state:
+    st.session_state.drawing_data = None  # Initialize drawing_data
 
 # Debug environment variables (temporary)
 st.write("SUPABASE_URL:", os.getenv("SUPABASE_URL"))
