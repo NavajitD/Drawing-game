@@ -10,6 +10,33 @@ from game_logic import (
 )
 from ui_components import render_join_create_screen, render_game_interface
 from utils import get_val_or_default
+from streamlit.components.v1 import html
+import streamlit_javascript as st_js
+
+if st.session_state.get("in_game", False):
+    html(open("supabase_realtime.html").read(), height=0)
+    st_js.run_js(f'''
+        window.parent.postMessage({{
+            type: "subscribe",
+            roomId: "{st.session_state.room_id}",
+            url: "{os.getenv("SUPABASE_URL")}",
+            key: "{os.getenv("SUPABASE_ANON_KEY")}"
+        }}, "*")
+    ''')
+    updates = st_js.get_from_js("window.receivedMessages")
+    if updates:
+        for update in updates:
+            if update["type"] == "room_update":
+                st.session_state.game_state = update["data"]["game_state"]["status"]
+            elif update["type"] == "players_update":
+                st.session_state.players = sorted(
+                    [{"id": p["user_id"], "name": p["name"], "score": p["score"], "color": p["color"], "avatar": p["avatar"]} for p in update["data"] if time.time() - p["last_seen"] < 60],
+                    key=lambda x: x["score"],
+                    reverse=True
+                )
+            elif update["type"] == "messages_update":
+                st.session_state.chat_messages = update["data"]
+        st.experimental_rerun()
 
 # Debug: Print directory contents
 print("Current directory:", os.getcwd())
