@@ -8,11 +8,8 @@ from supabase_client import get_supabase_client
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-try:
-    supabase = get_supabase_client()
-except ValueError as e:
-    st.error(f"Failed to connect to database: {e}")
-    supabase = None
+# Supabase client initialized in main.py
+supabase = None
 
 def initialize_game(room_id, is_owner=False, username="Player"):
     """
