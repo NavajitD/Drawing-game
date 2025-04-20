@@ -33,18 +33,21 @@ if "word_lists" not in st.session_state:
         "hard": ["airplane", "mountain", "castle"]
     }
 
+# Debug environment variables (temporary)
+st.write("SUPABASE_URL:", os.getenv("SUPABASE_URL"))
+st.write("SUPABASE_ANON_KEY:", os.getenv("SUPABASE_ANON_KEY")[:10] + "..." if os.getenv("SUPABASE_ANON_KEY") else None)
+
 # Initialize Supabase client
 supabase = None
 try:
-    supabase = get_supabase_client()
+    url = os.getenv("SUPABASE_URL")
+    anon_key = os.getenv("SUPABASE_ANON_KEY")
+    if not url or not anon_key:
+        raise ValueError("SUPABASE_URL or SUPABASE_ANON_KEY is not set")
+    supabase = get_supabase_client(url, anon_key)
     globals()['supabase'] = supabase  # Set global supabase for game_logic
 except ValueError as e:
     st.error(f"Failed to connect to database: {e}")
-
-# Debug environment variables (temporary)
-if supabase is None:
-    st.write("SUPABASE_URL:", os.getenv("SUPABASE_URL"))
-    st.write("SUPABASE_ANON_KEY:", os.getenv("SUPABASE_ANON_KEY")[:10] + "..." if os.getenv("SUPABASE_ANON_KEY") else None)
 
 # Main app logic
 st.title("That Drawing Game")
