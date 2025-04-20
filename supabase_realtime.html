@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <script>
+    function subscribe(roomId, url, key) {
+      const supabase = Supabase.createClient(url, key);
+      supabase
+        .from("rooms")
+        .on("*", payload => {
+          window.parent.postMessage({ type: "room_update", data: payload.new }, "*");
+        })
+        .subscribe();
+      supabase
+        .from("players")
+        .on("*", payload => {
+          supabase
+            .from("players")
+            .select("*")
+            .eq("room_id", roomId)
+            .then(({ data }) => {
+              window.parent.postMessage({ type: "players_update", data }, "*");
+            });
+        })
+        .subscribe();
+      supabase
+        .from("chat_messages")
+        .on("*", payload => {
+          supabase
+            .from("chat_messages")
+            .select("message_data")
+            .eq("room_id", roomId)
+            .order("created_at")
+            .then(({ data }) => {
+              window.parent.postMessage({ type: "messages_update", data: data.map(m => m.message_data) }, "*");
+            });
+        })
+        .subscribe();
+    }
+
+    window.addEventListener("message", (event) => {
+      if (event.data.type === "subscribe") {
+        subscribe(event.data.roomId, event.data.url, event.data.key);
+      }
+    });
+  </script>
+</body>
+</html>
