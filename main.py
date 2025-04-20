@@ -2,9 +2,10 @@ import streamlit as st
 import os
 import uuid
 from supabase_client import get_supabase_client
-from game_logic import initialize_game, sync_game_state
+from game_logic import initialize_game, sync_game_state, start_game, send_chat_message, leave_game, update_difficulty, update_min_players
+from ui_components import render_game_ui  # Assuming this handles canvas, chat, etc.
 
-# Set page config as the first Streamlit command
+# Set page config first
 st.set_page_config(
     page_title="That Drawing Game",
     page_icon="✏️",
@@ -39,29 +40,54 @@ if "word_lists" not in st.session_state:
 supabase = None
 try:
     supabase = get_supabase_client()
+    globals()['supabase'] = supabase  # Set global supabase for game_logic
 except ValueError as e:
     st.error(f"Failed to connect to database: {e}")
+
+# Debug environment variables (temporary)
+st.write("SUPABASE_URL:", os.getenv("SUPABASE_URL"))
+st.write("SUPABASE_ANON_KEY:", os.getenv("SUPABASE_ANON_KEY")[:10] + "..." if os.getenv("SUPABASE_ANON_KEY") else None)
 
 # Main app logic
 st.title("That Drawing Game")
 
 if not st.session_state.in_game:
-    username = st.text_input("Enter your username", value="Player")
-    room_id = st.text_input("Enter room ID or create a new one")
-    is_owner = st.checkbox("Create new room")
-    
-    if st.button("Join/Create Room"):
-        if username and room_id:
-            initialize_game(room_id, is_owner, username)
-        else:
-            st.error("Please enter a username and room ID")
+    with st.form("join_form"):
+        username = st.text_input("Enter your username", value="Player")
+        room_id = st.text_input("Enter room ID or create a new one")
+        is_owner = st.checkbox("Create new room")
+        difficulty = st.selectbox("Difficulty", ["easy", "medium", "hard"], index=["easy", "medium", "hard"].index(st.session_state.difficulty))
+        min_players = st.number_input("Minimum players", min_value=2, max_value=10, value=st.session_state.min_players)
+        submit = st.form_submit_button("Join/Create Room")
+        
+        if submit:
+            if username and room_id:
+                st.session_state.difficulty = difficulty
+                st.session_state.min_players = min_players
+                initialize_game(room_id, is_owner, username)
+            else:
+                st.error("Please enter a username and room ID")
 else:
     sync_game_state()
-    st.write(f"In room: {st.session_state.room_id}")
-    if st.button("Leave Game"):
-        from game_logic import leave_game
-        leave_game()
-
-# Debug: List files
-if os.getenv("STREAMLIT_ENV") == "development":
-    st.write("Files in directory:", os.listdir('.'))
+    render_game_ui()  # Render full UI (canvas, chat, players)
+    
+    # Game controls
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.session_state.is_room_owner and st.session_state.game_state == "waiting":
+            if st.button("Start Game"):
+                start_game()
+    with col2:
+        if st.button("Leave Game"):
+            leave_game()
+    
+    # Owner settings
+    if st.session_state.is_room_owner:
+        with st.expander("Game Settings"):
+            new_difficulty = st.selectbox("Change Difficulty", ["easy", "medium", "hard"], index=["easy", "medium", "hard"].index(st.session_state.difficulty))
+            new_min_players = st.number_input("Change Minimum Players", min_value=2, max_value=10, value=st.session_state.min_players)
+            if st.button("Update Settings"):
+                if new_difficulty != st.session_state.difficulty:
+                    update_difficulty(new_difficulty)
+                if new_min_players != st.session_state.min_players:
+                    update_min_players(new_min_players)
