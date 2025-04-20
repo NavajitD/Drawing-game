@@ -2,19 +2,17 @@ import streamlit as st
 import time
 import random
 import uuid
-import asyncio
-import threading
 import logging
-from supabase_client import get_supabase_client, get_supabase_async_client
+from firebase_client import get_firestore_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-supabase = get_supabase_client()
+db = get_firestore_client()
 
 def initialize_game(room_id, is_owner=False, username="Player"):
     """
-    Initialize a game room, setting up Supabase subscriptions and player data.
+    Initialize a game room with Firebase Firestore.
     """
     start_time = time.time()
     logger.info(f"Starting initialize_game for room {room_id}")
@@ -23,20 +21,16 @@ def initialize_game(room_id, is_owner=False, username="Player"):
     st.session_state.is_room_owner = is_owner
     st.session_state.username = username
     st.session_state.in_game = True
-    st.session_state.subscription = None  # Initialize subscription state
+    st.session_state.last_sync = 0
 
     try:
-        if not supabase:
-            st.error("Supabase client not initialized.")
-            st.session_state.in_game = False
-            return
-
         # Check if room exists
         room_check_start = time.time()
-        room_data = supabase.table("rooms").select("*").eq("id", room_id).execute()
+        room_ref = db.collection("rooms").document(room_id)
+        room_doc = room_ref.get()
         logger.info(f"Room check took {time.time() - room_check_start:.2f} seconds")
 
-        if not room_data.data and is_owner:
+        if not room_doc.exists and is_owner:
             # Create new room
             room_insert_start = time.time()
             room_data = {
@@ -56,13 +50,15 @@ def initialize_game(room_id, is_owner=False, username="Player"):
                     "drawing_player_id": "",
                     "timer_start": 0
                 },
-                "drawing_data": None
+                "drawing_data": None,
+                "created_at": time.time()
             }
-            supabase.table("rooms").insert(room_data).execute()
+            room_ref.set(room_data)
             logger.info(f"Room insert took {time.time() - room_insert_start:.2f} seconds")
 
-            # Add player to the room
+            # Add player
             player_insert_start = time.time()
+            player_id = str(uuid.uuid4())
             player_data = {
                 "user_id": st.session_state.user_id,
                 "room_id": room_id,
@@ -72,7 +68,7 @@ def initialize_game(room_id, is_owner=False, username="Player"):
                 "avatar": username[0].upper(),
                 "last_seen": int(time.time())
             }
-            supabase.table("players").insert(player_data).execute()
+            db.collection("players").document(player_id).set(player_data)
             logger.info(f"Player insert took {time.time() - player_insert_start:.2f} seconds")
 
             # Add system messages
@@ -83,43 +79,47 @@ def initialize_game(room_id, is_owner=False, username="Player"):
                     "message_data": {
                         "type": "system",
                         "content": f"Room created! Waiting for at least {st.session_state.min_players} players to join."
-                    }
+                    },
+                    "created_at": time.time()
                 },
                 {
                     "room_id": room_id,
                     "message_data": {
                         "type": "system",
                         "content": f"{username} has joined the room."
-                    }
+                    },
+                    "created_at": time.time()
                 }
             ]
-            supabase.table("chat_messages").insert(system_messages).execute()
+            for msg in system_messages:
+                db.collection("chat_messages").document(str(uuid.uuid4())).set(msg)
             logger.info(f"Message insert took {time.time() - message_insert_start:.2f} seconds")
 
-        elif room_data.data and not is_owner:
+        elif room_doc.exists and not is_owner:
             # Join existing room
             join_start = time.time()
-            room = room_data.data[0]
-            player_color = random.choice(["#FF5722", "#E91E63", "#9C27B0", "#673AB7", "#3F51B5"])
+            room = room_doc.to_dict()
+            player_id = str(uuid.uuid4())
             player_data = {
                 "user_id": st.session_state.user_id,
                 "room_id": room_id,
                 "name": username,
                 "score": 0,
-                "color": player_color,
+                "color": random.choice(["#FF5722", "#E91E63", "#9C27B0", "#673AB7", "#3F51B5"]),
                 "avatar": username[0].upper(),
                 "last_seen": int(time.time())
             }
-            supabase.table("players").insert(player_data).execute()
+            db.collection("players").document(player_id).set(player_data)
 
             new_message = {
                 "room_id": room_id,
                 "message_data": {
                     "type": "system",
                     "content": f"{username} has joined the room."
-                }
+                },
+                "created_at": time.time()
             }
-            supabase.table("chat_messages").insert(new_message).execute()
+            db.collection("chat_messages").document(str(uuid.uuid4())).set(new_message)
 
             settings = room.get("settings", {})
             st.session_state.difficulty = settings.get("difficulty", "medium")
@@ -129,7 +129,7 @@ def initialize_game(room_id, is_owner=False, username="Player"):
             st.session_state.game_state = room.get("game_state", {}).get("status", "waiting")
             logger.info(f"Join room took {time.time() - join_start:.2f} seconds")
 
-        elif not room_data.data and not is_owner:
+        elif not room_doc.exists and not is_owner:
             st.error(f"Room {room_id} does not exist!")
             st.session_state.in_game = False
             return
@@ -138,112 +138,50 @@ def initialize_game(room_id, is_owner=False, username="Player"):
         sync_game_state()
         logger.info(f"Total initialize_game took {time.time() - start_time:.2f} seconds")
 
-        # Add button to start subscriptions manually for testing
-        if st.button("Start Real-Time Subscriptions"):
-            subscription_start = time.time()
-            subscription_thread = threading.Thread(target=start_realtime_subscriptions, args=(room_id,))
-            subscription_thread.daemon = True
-            subscription_thread.start()
-            logger.info(f"Subscription thread started in {time.time() - subscription_start:.2f} seconds")
-
     except Exception as e:
         st.error(f"Error initializing game: {e}")
         st.session_state.in_game = False
         logger.error(f"Error in initialize_game: {e}")
 
-def start_realtime_subscriptions(room_id):
-    """
-    Run async real-time subscriptions in a separate thread.
-    """
-    async def setup_async_subscriptions():
-        async_client = get_supabase_async_client()
-        subscription_start = time.time()
-        try:
-            channel = async_client.channel(f"room:{room_id}")
-            channel.on(
-                "postgres_changes",
-                {
-                    "event": "*",
-                    "schema": "public",
-                    "table": "players",
-                    "filter": f"room_id=eq.{room_id}"
-                },
-                lambda payload: sync_game_state()
-            ).on(
-                "postgres_changes",
-                {
-                    "event": "*",
-                    "schema": "public",
-                    "table": "chat_messages",
-                    "filter": f"room_id=eq.{room_id}"
-                },
-                lambda payload: sync_game_state()
-            ).on(
-                "postgres_changes",
-                {
-                    "event": "*",
-                    "schema": "public",
-                    "table": "rooms",
-                    "filter": f"id=eq.{room_id}"
-                },
-                lambda payload: sync_game_state()
-            )
-            await channel.subscribe()
-            st.session_state.subscription = channel
-            logger.info(f"Real-time subscription setup took {time.time() - subscription_start:.2f} seconds")
-            while True:
-                await asyncio.sleep(1)
-        except Exception as e:
-            st.error(f"Error setting up real-time subscription: {e}")
-            st.session_state.subscription = None
-            logger.error(f"Error in real-time subscription: {e}")
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(setup_async_subscriptions())
-    loop.close()
-
 def sync_game_state():
     """
-    Synchronize the local game state with Supabase data.
+    Synchronize the local game state with Firebase data via polling.
     """
     if not st.session_state.in_game or not st.session_state.room_id:
         return
 
+    current_time = time.time()
+    if current_time - st.session_state.last_sync < 5:
+        return
+
     sync_start = time.time()
     try:
-        # Update player's last seen timestamp
-        supabase.table("players").update(
-            {"last_seen": int(time.time())}
-        ).eq("user_id", st.session_state.user_id).eq(
-            "room_id", st.session_state.room_id
-        ).execute()
+        # Update player's last seen
+        players = db.collection("players").where("user_id", "==", st.session_state.user_id).where("room_id", "==", st.session_state.room_id).get()
+        for player in players:
+            player.reference.update({"last_seen": int(time.time())})
 
         # Fetch room data
-        room_data = supabase.table("rooms").select("*").eq("id", st.session_state.room_id).execute()
-        if not room_data.data:
+        room_doc = db.collection("rooms").document(st.session_state.room_id).get()
+        if not room_doc.exists:
             st.error("Room no longer exists!")
             st.session_state.in_game = False
             return
 
-        room = room_data.data[0]
+        room = room_doc.to_dict()
 
         # Fetch players data
-        players_data = supabase.table("players").select("*").eq(
-            "room_id", st.session_state.room_id
-        ).execute()
-
-        # Update players list
+        players_data = db.collection("players").where("room_id", "==", st.session_state.room_id).get()
         st.session_state.players = [
             {
-                "id": player["user_id"],
-                "name": player["name"],
-                "score": player["score"],
-                "color": player["color"],
-                "avatar": player["avatar"]
+                "id": player.to_dict()["user_id"],
+                "name": player.to_dict()["name"],
+                "score": player.to_dict()["score"],
+                "color": player.to_dict()["color"],
+                "avatar": player.to_dict()["avatar"]
             }
-            for player in players_data.data
-            if time.time() - player["last_seen"] < 60
+            for player in players_data
+            if time.time() - player.to_dict()["last_seen"] < 60
         ]
         st.session_state.players = sorted(st.session_state.players, key=lambda x: x["score"], reverse=True)
 
@@ -269,17 +207,14 @@ def sync_game_state():
                 st.session_state.drawing_data = room.get("drawing_data")
 
         # Sync chat messages
-        chat_data = supabase.table("chat_messages").select(
-            "message_data"
-        ).eq("room_id", st.session_state.room_id).order(
-            "created_at"
-        ).execute()
-        st.session_state.chat_messages = [msg["message_data"] for msg in chat_data.data]
+        chat_data = db.collection("chat_messages").where("room_id", "==", st.session_state.room_id).order_by("created_at").get()
+        st.session_state.chat_messages = [msg.to_dict()["message_data"] for msg in chat_data]
 
+        st.session_state.last_sync = current_time
         logger.info(f"sync_game_state took {time.time() - sync_start:.2f} seconds")
         st.experimental_rerun()
     except Exception as e:
-        st.error(f"Error syncing with Supabase: {e}")
+        st.error(f"Error syncing with Firebase: {e}")
         logger.error(f"Error in sync_game_state: {e}")
 
 def start_game():
@@ -304,18 +239,20 @@ def start_game():
             "timer_start": int(time.time())
         }
 
-        supabase.table("rooms").update(
-            {"game_state": game_state, "drawing_data": None}
-        ).eq("id", st.session_state.room_id).execute()
+        db.collection("rooms").document(st.session_state.room_id).update({
+            "game_state": game_state,
+            "drawing_data": None
+        })
 
         new_message = {
             "room_id": st.session_state.room_id,
             "message_data": {
                 "type": "system",
                 "content": f"Game started! {drawer_name} is drawing first."
-            }
+            },
+            "created_at": time.time()
         }
-        supabase.table("chat_messages").insert(new_message).execute()
+        db.collection("chat_messages").document(str(uuid.uuid4())).set(new_message)
 
         st.session_state.game_state = "active"
         st.session_state.drawing_player_index = drawer_index
@@ -337,33 +274,31 @@ def send_chat_message(content, is_correct=False):
                 "type": "player",
                 "player": st.session_state.username,
                 "content": content
-            }
+            },
+            "created_at": time.time()
         }
         if is_correct:
             new_message["message_data"]["correct"] = True
 
-        supabase.table("chat_messages").insert(new_message).execute()
+        db.collection("chat_messages").document(str(uuid.uuid4())).set(new_message)
 
         if is_correct:
             time_left = st.session_state.round_time - (time.time() - st.session_state.timer_start)
             score_gain = int(time_left * 5)
-            player_data = supabase.table("players").select("score").eq(
-                "user_id", st.session_state.user_id
-            ).eq("room_id", st.session_state.room_id).execute().data[0]
-            new_score = player_data["score"] + score_gain
-
-            supabase.table("players").update(
-                {"score": new_score}
-            ).eq("user_id", st.session_state.user_id).eq("room_id", st.session_state.room_id).execute()
+            players = db.collection("players").where("user_id", "==", st.session_state.user_id).where("room_id", "==", st.session_state.room_id).get()
+            for player in players:
+                new_score = player.to_dict()["score"] + score_gain
+                player.reference.update({"score": new_score})
 
             word_message = {
                 "room_id": st.session_state.room_id,
                 "message_data": {
                     "type": "system",
                     "content": f"The word was: {st.session_state.current_word.upper()}"
-                }
+                },
+                "created_at": time.time()
             }
-            supabase.table("chat_messages").insert(word_message).execute()
+            db.collection("chat_messages").document(str(uuid.uuid4())).set(word_message)
 
             if st.session_state.rounds_played + 1 >= st.session_state.max_rounds:
                 end_game()
@@ -386,26 +321,28 @@ def new_round():
         next_player_name = st.session_state.players[next_index]["name"]
         new_word = random.choice(st.session_state.word_lists[st.session_state.difficulty])
 
-        room_data = supabase.table("rooms").select("game_state").eq("id", st.session_state.room_id).execute().data[0]
-        game_state = room_data["game_state"]
+        room_doc = db.collection("rooms").document(st.session_state.room_id).get()
+        game_state = room_doc.to_dict()["game_state"]
         game_state["current_round"] += 1
         game_state["rounds_played"] += 1
         game_state["current_word"] = new_word
         game_state["drawing_player_id"] = next_player_id
         game_state["timer_start"] = int(time.time())
 
-        supabase.table("rooms").update(
-            {"game_state": game_state, "drawing_data": None}
-        ).eq("id", st.session_state.room_id).execute()
+        db.collection("rooms").document(st.session_state.room_id).update({
+            "game_state": game_state,
+            "drawing_data": None
+        })
 
         new_message = {
             "room_id": st.session_state.room_id,
             "message_data": {
                 "type": "system",
                 "content": f"Round {game_state['current_round']}! {next_player_name} is drawing now!"
-            }
+            },
+            "created_at": time.time()
         }
-        supabase.table("chat_messages").insert(new_message).execute()
+        db.collection("chat_messages").document(str(uuid.uuid4())).set(new_message)
 
     except Exception as e:
         st.error(f"Error starting new round: {e}")
@@ -421,29 +358,30 @@ def end_game():
         highest_score = max(player["score"] for player in st.session_state.players)
         winners = [player["name"] for player in st.session_state.players if player["score"] == highest_score]
 
-        room_data = supabase.table("rooms").select("game_state").eq("id", st.session_state.room_id).execute().data[0]
-        game_state = room_data["game_state"]
+        room_doc = db.collection("rooms").document(st.session_state.room_id).get()
+        game_state = room_doc.to_dict()["game_state"]
         game_state["status"] = "game_over"
 
-        supabase.table("rooms").update(
-            {"game_state": game_state}
-        ).eq("id", st.session_state.room_id).execute()
+        db.collection("rooms").document(st.session_state.room_id).update({"game_state": game_state})
 
         game_over_message = {
             "room_id": st.session_state.room_id,
             "message_data": {
                 "type": "system",
                 "content": "Game over! Thanks for playing!"
-            }
+            },
+            "created_at": time.time()
         }
         winner_message = {
             "room_id": st.session_state.room_id,
             "message_data": {
                 "type": "system",
                 "content": f"Winner: {', '.join(winners)} with {highest_score} points!"
-            }
+            },
+            "created_at": time.time()
         }
-        supabase.table("chat_messages").insert([game_over_message, winner_message]).execute()
+        for msg in [game_over_message, winner_message]:
+            db.collection("chat_messages").document(str(uuid.uuid4())).set(msg)
 
         st.session_state.game_state = "game_over"
 
@@ -458,33 +396,33 @@ def leave_game():
         return
 
     try:
-        supabase.table("players").delete().eq(
-            "user_id", st.session_state.user_id
-        ).eq("room_id", st.session_state.room_id).execute()
+        players = db.collection("players").where("user_id", "==", st.session_state.user_id).where("room_id", "==", st.session_state.room_id).get()
+        for player in players:
+            player.reference.delete()
 
         leave_message = {
             "room_id": st.session_state.room_id,
             "message_data": {
                 "type": "system",
                 "content": f"{st.session_state.username} left the room."
-            }
+            },
+            "created_at": time.time()
         }
-        supabase.table("chat_messages").insert(leave_message).execute()
+        db.collection("chat_messages").document(str(uuid.uuid4())).set(leave_message)
 
         if st.session_state.is_room_owner and len(st.session_state.players) > 1:
             for player in st.session_state.players:
                 if player["id"] != st.session_state.user_id:
-                    supabase.table("rooms").update(
-                        {"owner_id": player["id"]}
-                    ).eq("id", st.session_state.room_id).execute()
+                    db.collection("rooms").document(st.session_state.room_id).update({"owner_id": player["id"]})
                     owner_message = {
                         "room_id": st.session_state.room_id,
                         "message_data": {
                             "type": "system",
                             "content": f"{player['name']} is now the room owner."
-                        }
+                        },
+                        "created_at": time.time()
                     }
-                    supabase.table("chat_messages").insert(owner_message).execute()
+                    db.collection("chat_messages").document(str(uuid.uuid4())).set(owner_message)
                     break
 
         st.session_state.in_game = False
@@ -503,13 +441,12 @@ def update_difficulty(new_difficulty):
         return
 
     try:
-        room_data = supabase.table("rooms").select("settings").eq("id", st.session_state.room_id).execute().data[0]
-        settings = room_data["settings"]
+        room_ref = db.collection("rooms").document(st.session_state.room_id)
+        room_doc = room_ref.get()
+        settings = room_doc.to_dict()["settings"]
         settings["difficulty"] = new_difficulty
 
-        supabase.table("rooms").update(
-            {"settings": settings}
-        ).eq("id", st.session_state.room_id).execute()
+        room_ref.update({"settings": settings})
 
         st.session_state.difficulty = new_difficulty
 
@@ -518,9 +455,10 @@ def update_difficulty(new_difficulty):
             "message_data": {
                 "type": "system",
                 "content": f"Difficulty changed to {new_difficulty.title()}"
-            }
+            },
+            "created_at": time.time()
         }
-        supabase.table("chat_messages").insert(difficulty_message).execute()
+        db.collection("chat_messages").document(str(uuid.uuid4())).set(difficulty_message)
 
     except Exception as e:
         st.error(f"Error updating difficulty: {e}")
@@ -533,13 +471,12 @@ def update_min_players(new_min_players):
         return
 
     try:
-        room_data = supabase.table("rooms").select("settings").eq("id", st.session_state.room_id).execute().data[0]
-        settings = room_data["settings"]
+        room_ref = db.collection("rooms").document(st.session_state.room_id)
+        room_doc = room_ref.get()
+        settings = room_doc.to_dict()["settings"]
         settings["min_players"] = new_min_players
 
-        supabase.table("rooms").update(
-            {"settings": settings}
-        ).eq("id", st.session_state.room_id).execute()
+        room_ref.update({"settings": settings})
 
         st.session_state.min_players = new_min_players
 
@@ -548,9 +485,10 @@ def update_min_players(new_min_players):
             "message_data": {
                 "type": "system",
                 "content": f"Minimum players changed to {new_min_players}"
-            }
+            },
+            "created_at": time.time()
         }
-        supabase.table("chat_messages").insert(min_players_message).execute()
+        db.collection("chat_messages").document(str(uuid.uuid4())).set(min_players_message)
 
     except Exception as e:
         st.error(f"Error updating minimum players: {e}")
@@ -561,20 +499,18 @@ def cleanup_inactive_players():
     """
     try:
         current_time = int(time.time())
-        inactive_players = supabase.table("players").select("*").eq(
-            "room_id", st.session_state.room_id
-        ).lt("last_seen", current_time - 60).execute().data
-
-        for player in inactive_players:
-            supabase.table("players").delete().eq("id", player["id"]).execute()
+        players = db.collection("players").where("room_id", "==", st.session_state.room_id).where("last_seen", "<", current_time - 60).get()
+        for player in players:
+            player.reference.delete()
             leave_message = {
                 "room_id": st.session_state.room_id,
                 "message_data": {
                     "type": "system",
-                    "content": f"{player['name']} was removed due to inactivity."
-                }
+                    "content": f"{player.to_dict()['name']} was removed due to inactivity."
+                },
+                "created_at": time.time()
             }
-            supabase.table("chat_messages").insert(leave_message).execute()
+            db.collection("chat_messages").document(str(uuid.uuid4())).set(leave_message)
 
     except Exception as e:
         st.error(f"Error cleaning up inactive players: {e}")
