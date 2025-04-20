@@ -16,6 +16,18 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# Apply custom CSS for Skribbl.io-like styling
+st.markdown("""
+    <style>
+    body { background-color: #F0F0F0; color: #333333; font-family: 'Arial', sans-serif; }
+    h1, h2, h3 { font-family: 'Comic Sans MS', cursive; color: #00AEEF; }
+    .stButton>button { background-color: #00AEEF; color: white; border-radius: 10px; padding: 10px 20px; font-size: 16px; font-weight: bold; transition: all 0.3s; }
+    .stButton>button:hover { background-color: #FFD700; color: #333333; }
+    .stContainer { border-radius: 10px; padding: 10px; background-color: white; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+    @media (max-width: 768px) { .stColumn { width: 100% !important; } }
+    </style>
+""", unsafe_allow_html=True)
+
 # Initialize session state
 if "user_id" not in st.session_state:
     st.session_state.user_id = str(uuid.uuid4())
