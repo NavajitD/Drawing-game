@@ -44,7 +44,7 @@ def render_game_ui(supabase: Client):
                 supabase.table("rooms").update({"drawing_data": canvas_result.json_data}).eq("id", st.session_state.room_id).execute()
         elif st.session_state.game_state == "active":
             # Guesser view
-            st.write(f"**Guess the word: {st.session_state.hidden_word}**")
+            st.write(f"**Guess the word: {st.session_state.hidden_word or 'Waiting...'}**")
             canvas_kwargs = {
                 "fill_color": "rgba(255, 165, 0, 0.3)",
                 "stroke_width": 2,
