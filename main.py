@@ -45,7 +45,6 @@ try:
     if not url or not anon_key:
         raise ValueError("SUPABASE_URL or SUPABASE_ANON_KEY is not set")
     supabase = get_supabase_client(url, anon_key)
-    globals()['supabase'] = supabase  # Set global supabase for game_logic
 except ValueError as e:
     st.error(f"Failed to connect to database: {e}")
 
@@ -65,11 +64,11 @@ if not st.session_state.in_game:
             if username and room_id:
                 st.session_state.difficulty = difficulty
                 st.session_state.min_players = min_players
-                initialize_game(room_id, is_owner, username)
+                initialize_game(supabase, room_id, is_owner, username)
             else:
                 st.error("Please enter a username and room ID")
 else:
-    sync_game_state()
+    sync_game_state(supabase)
     render_game_ui()  # Render full UI (canvas, chat, players)
     
     # Game controls
@@ -77,10 +76,10 @@ else:
     with col1:
         if st.session_state.is_room_owner and st.session_state.game_state == "waiting":
             if st.button("Start Game"):
-                start_game()
+                start_game(supabase)
     with col2:
         if st.button("Leave Game"):
-            leave_game()
+            leave_game(supabase)
     
     # Owner settings
     if st.session_state.is_room_owner:
@@ -89,9 +88,9 @@ else:
             new_min_players = st.number_input("Change Minimum Players", min_value=2, max_value=10, value=st.session_state.min_players)
             if st.button("Update Settings"):
                 if new_difficulty != st.session_state.difficulty:
-                    update_difficulty(new_difficulty)
+                    update_difficulty(supabase, new_difficulty)
                 if new_min_players != st.session_state.min_players:
-                    update_min_players(new_min_players)
+                    update_min_players(supabase, new_min_players)
 
 # Debug: List files
 if os.getenv("STREAMLIT_ENV") == "development":
