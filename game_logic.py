@@ -8,12 +8,21 @@ from supabase_client import get_supabase_client
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-supabase = get_supabase_client()
+try:
+    supabase = get_supabase_client()
+except ValueError as e:
+    st.error(f"Failed to connect to database: {e}")
+    supabase = None
 
 def initialize_game(room_id, is_owner=False, username="Player"):
     """
     Initialize a game room with Supabase.
     """
+    if not supabase:
+        st.error("Database connection not available")
+        st.session_state.in_game = False
+        return
+
     start_time = time.time()
     logger.info(f"Starting initialize_game for room {room_id}")
 
@@ -49,8 +58,7 @@ def initialize_game(room_id, is_owner=False, username="Player"):
                     "drawing_player_id": "",
                     "timer_start": 0
                 },
-                "drawing_data": None,
-                "created_at": int(time.time())
+                "drawing_data": None
             }
             supabase.table("rooms").insert(room_data).execute()
             logger.info(f"Room insert took {time.time() - room_insert_start:.2f} seconds")
@@ -79,20 +87,17 @@ def initialize_game(room_id, is_owner=False, username="Player"):
                     "message_data": {
                         "type": "system",
                         "content": f"Room created! Waiting for at least {st.session_state.min_players} players to join."
-                    },
-                    "created_at": int(time.time())
+                    }
                 },
                 {
                     "room_id": room_id,
                     "message_data": {
                         "type": "system",
                         "content": f"{username} has joined the room."
-                    },
-                    "created_at": int(time.time())
+                    }
                 }
             ]
-            for msg in system_messages:
-                supabase.table("chat_messages").insert(msg).execute()
+            supabase.table("chat_messages").insert(system_messages).execute()
             logger.info(f"Message insert took {time.time() - message_insert_start:.2f} seconds")
 
         elif room.data and not is_owner:
@@ -117,8 +122,7 @@ def initialize_game(room_id, is_owner=False, username="Player"):
                 "message_data": {
                     "type": "system",
                     "content": f"{username} has joined the room."
-                },
-                "created_at": int(time.time())
+                }
             }
             supabase.table("chat_messages").insert(new_message).execute()
 
@@ -148,7 +152,7 @@ def sync_game_state():
     """
     Synchronize the local game state with Supabase data via polling.
     """
-    if not st.session_state.in_game or not st.session_state.room_id:
+    if not st.session_state.in_game or not st.session_state.room_id or not supabase:
         return
 
     current_time = time.time()
@@ -206,7 +210,7 @@ def sync_game_state():
                 st.session_state.drawing_data = room.get("drawing_data")
 
         # Sync chat messages
-        chat_data = supabase.table("chat_messages").select("message_data").eq("room_id", st.session_state.room_id).order("created_at").execute()
+        chat_data = supabase.table("chat_messages").select("message_data").eq("room_id", st.session_state.room_id).order("created_at").limit(50).execute()
         st.session_state.chat_messages = [msg["message_data"] for msg in chat_data.data]
 
         st.session_state.last_sync = current_time
@@ -220,7 +224,7 @@ def start_game():
     """
     Start the game by selecting the first drawer and word.
     """
-    if not st.session_state.is_room_owner:
+    if not st.session_state.is_room_owner or not supabase:
         return
 
     try:
@@ -248,8 +252,7 @@ def start_game():
             "message_data": {
                 "type": "system",
                 "content": f"Game started! {drawer_name} is drawing first."
-            },
-            "created_at": int(time.time())
+            }
         }
         supabase.table("chat_messages").insert(new_message).execute()
 
@@ -261,11 +264,15 @@ def start_game():
 
     except Exception as e:
         st.error(f"Error starting game: {e}")
+        logger.error(f"Error starting game: {e}")
 
 def send_chat_message(content, is_correct=False):
     """
     Send a chat message, handling correct guesses and score updates.
     """
+    if not supabase:
+        return
+
     try:
         new_message = {
             "room_id": st.session_state.room_id,
@@ -273,8 +280,7 @@ def send_chat_message(content, is_correct=False):
                 "type": "player",
                 "player": st.session_state.username,
                 "content": content
-            },
-            "created_at": int(time.time())
+            }
         }
         if is_correct:
             new_message["message_data"]["correct"] = True
@@ -284,15 +290,15 @@ def send_chat_message(content, is_correct=False):
         if is_correct:
             time_left = st.session_state.round_time - (time.time() - st.session_state.timer_start)
             score_gain = int(time_left * 5)
-            supabase.table("players").update({"score": supabase.table("players").select("score").eq("user_id", st.session_state.user_id).eq("room_id", st.session_state.room_id).execute().data[0]["score"] + score_gain}).eq("user_id", st.session_state.user_id).eq("room_id", st.session_state.room_id).execute()
+            player = supabase.table("players").select("score").eq("user_id", st.session_state.user_id).eq("room_id", st.session_state.room_id).execute().data[0]
+            supabase.table("players").update({"score": player["score"] + score_gain}).eq("user_id", st.session_state.user_id).eq("room_id", st.session_state.room_id).execute()
 
             word_message = {
                 "room_id": st.session_state.room_id,
                 "message_data": {
                     "type": "system",
                     "content": f"The word was: {st.session_state.current_word.upper()}"
-                },
-                "created_at": int(time.time())
+                }
             }
             supabase.table("chat_messages").insert(word_message).execute()
 
@@ -303,12 +309,13 @@ def send_chat_message(content, is_correct=False):
 
     except Exception as e:
         st.error(f"Error sending message: {e}")
+        logger.error(f"Error sending message: {e}")
 
 def new_round():
     """
     Start a new round with the next drawer and word.
     """
-    if not st.session_state.is_room_owner:
+    if not st.session_state.is_room_owner or not supabase:
         return
 
     try:
@@ -335,19 +342,19 @@ def new_round():
             "message_data": {
                 "type": "system",
                 "content": f"Round {game_state['current_round']}! {next_player_name} is drawing now!"
-            },
-            "created_at": int(time.time())
+            }
         }
         supabase.table("chat_messages").insert(new_message).execute()
 
     except Exception as e:
         st.error(f"Error starting new round: {e}")
+        logger.error(f"Error starting new round: {e}")
 
 def end_game():
     """
     End the game and announce the winner.
     """
-    if not st.session_state.is_room_owner:
+    if not st.session_state.is_room_owner or not supabase:
         return
 
     try:
@@ -365,30 +372,28 @@ def end_game():
             "message_data": {
                 "type": "system",
                 "content": "Game over! Thanks for playing!"
-            },
-            "created_at": int(time.time())
+            }
         }
         winner_message = {
             "room_id": st.session_state.room_id,
             "message_data": {
                 "type": "system",
                 "content": f"Winner: {', '.join(winners)} with {highest_score} points!"
-            },
-            "created_at": int(time.time())
+            }
         }
-        for msg in [game_over_message, winner_message]:
-            supabase.table("chat_messages").insert(msg).execute()
+        supabase.table("chat_messages").insert([game_over_message, winner_message]).execute()
 
         st.session_state.game_state = "game_over"
 
     except Exception as e:
         st.error(f"Error ending game: {e}")
+        logger.error(f"Error ending game: {e}")
 
 def leave_game():
     """
     Allow a player to leave the game, updating ownership if necessary.
     """
-    if not st.session_state.in_game or not st.session_state.room_id:
+    if not st.session_state.in_game or not st.session_state.room_id or not supabase:
         return
 
     try:
@@ -399,8 +404,7 @@ def leave_game():
             "message_data": {
                 "type": "system",
                 "content": f"{st.session_state.username} left the room."
-            },
-            "created_at": int(time.time())
+            }
         }
         supabase.table("chat_messages").insert(leave_message).execute()
 
@@ -413,8 +417,7 @@ def leave_game():
                         "message_data": {
                             "type": "system",
                             "content": f"{player['name']} is now the room owner."
-                        },
-                        "created_at": int(time.time())
+                        }
                     }
                     supabase.table("chat_messages").insert(owner_message).execute()
                     break
@@ -424,6 +427,7 @@ def leave_game():
 
     except Exception as e:
         st.error(f"Error leaving game: {e}")
+        logger.error(f"Error leaving game: {e}")
         st.session_state.in_game = False
         st.session_state.game_initialized = False
 
@@ -431,7 +435,7 @@ def update_difficulty(new_difficulty):
     """
     Update the game difficulty.
     """
-    if not st.session_state.is_room_owner or not st.session_state.in_game:
+    if not st.session_state.is_room_owner or not st.session_state.in_game or not supabase:
         return
 
     try:
@@ -448,19 +452,19 @@ def update_difficulty(new_difficulty):
             "message_data": {
                 "type": "system",
                 "content": f"Difficulty changed to {new_difficulty.title()}"
-            },
-            "created_at": int(time.time())
+            }
         }
         supabase.table("chat_messages").insert(difficulty_message).execute()
 
     except Exception as e:
         st.error(f"Error updating difficulty: {e}")
+        logger.error(f"Error updating difficulty: {e}")
 
 def update_min_players(new_min_players):
     """
     Update the minimum number of players.
     """
-    if not st.session_state.is_room_owner or not st.session_state.in_game:
+    if not st.session_state.is_room_owner or not st.session_state.in_game or not supabase:
         return
 
     try:
@@ -477,18 +481,21 @@ def update_min_players(new_min_players):
             "message_data": {
                 "type": "system",
                 "content": f"Minimum players changed to {new_min_players}"
-            },
-            "created_at": int(time.time())
+            }
         }
         supabase.table("chat_messages").insert(min_players_message).execute()
 
     except Exception as e:
         st.error(f"Error updating minimum players: {e}")
+        logger.error(f"Error updating minimum players: {e}")
 
 def cleanup_inactive_players():
     """
     Remove players inactive for over 60 seconds.
     """
+    if not supabase:
+        return
+
     try:
         current_time = int(time.time())
         inactive_players = supabase.table("players").select("name").eq("room_id", st.session_state.room_id).lt("last_seen", current_time - 60).execute()
@@ -500,10 +507,10 @@ def cleanup_inactive_players():
                 "message_data": {
                     "type": "system",
                     "content": f"{player['name']} was removed due to inactivity."
-                },
-                "created_at": int(time.time())
+                }
             }
             supabase.table("chat_messages").insert(leave_message).execute()
 
     except Exception as e:
         st.error(f"Error cleaning up inactive players: {e}")
+        logger.error(f"Error cleaning up inactive players: {e}")
