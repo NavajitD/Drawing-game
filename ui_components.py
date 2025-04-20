@@ -16,49 +16,48 @@ def render_game_ui(supabase: Client):
     with col1:
         st.subheader("Players")
         for player in st.session_state.players:
-            is_drawer = st.session_state.game_state == "active" and player["id"] == st.session_state.players[st.session_state.drawing_player_index]["id"]
+            is_drawer = st.session_state.game_state == "active" and st.session_state.drawing_player_index is not None and player["id"] == st.session_state.players[st.session_state.drawing_player_index]["id"]
             avatar = player["avatar"] if not is_drawer else "✏️ " + player["avatar"]
             st.write(f"{avatar} {player['name']} ({player['score']} points)")
     
     with col2:
         # Drawing canvas
-        if st.session_state.game_state == "active":
-            if st.session_state.players[st.session_state.drawing_player_index]["id"] == st.session_state.user_id:
-                # Drawer view
-                st.write(f"**Draw: {st.session_state.current_word.upper()}**")
-                col_color, col_brush = st.columns(2)
-                with col_color:
-                    stroke_color = st.color_picker("Stroke color", "#000000")
-                with col_brush:
-                    stroke_width = st.slider("Brush size", 1, 25, 2)
-                canvas_result = st_canvas(
-                    fill_color="rgba(255, 165, 0, 0.3)",
-                    stroke_width=stroke_width,
-                    stroke_color=stroke_color,
-                    background_color="#ffffff",
-                    height=450,
-                    width=600,
-                    drawing_mode="freedraw",
-                    key=f"canvas_{st.session_state.room_id}"
-                )
-                if canvas_result.json_data:
-                    supabase.table("rooms").update({"drawing_data": canvas_result.json_data}).eq("id", st.session_state.room_id).execute()
-            else:
-                # Guesser view
-                st.write(f"**Guess the word: {st.session_state.hidden_word}**")
-                canvas_kwargs = {
-                    "fill_color": "rgba(255, 165, 0, 0.3)",
-                    "stroke_width": 2,
-                    "stroke_color": "#000000",
-                    "background_color": "#ffffff",
-                    "height": 450,
-                    "width": 600,
-                    "drawing_mode": "view",
-                    "key": f"canvas_{st.session_state.room_id}_view"
-                }
-                if st.session_state.drawing_data:
-                    canvas_kwargs["initial_drawing"] = st.session_state.drawing_data
-                st_canvas(**canvas_kwargs)
+        if st.session_state.game_state == "active" and st.session_state.drawing_player_index is not None and st.session_state.players[st.session_state.drawing_player_index]["id"] == st.session_state.user_id:
+            # Drawer view
+            st.write(f"**Draw: {st.session_state.current_word.upper()}**")
+            col_color, col_brush = st.columns(2)
+            with col_color:
+                stroke_color = st.color_picker("Stroke color", "#000000")
+            with col_brush:
+                stroke_width = st.slider("Brush size", 1, 25, 2)
+            canvas_result = st_canvas(
+                fill_color="rgba(255, 165, 0, 0.3)",
+                stroke_width=stroke_width,
+                stroke_color=stroke_color,
+                background_color="#ffffff",
+                height=450,
+                width=600,
+                drawing_mode="freedraw",
+                key=f"canvas_{st.session_state.room_id}"
+            )
+            if canvas_result.json_data:
+                supabase.table("rooms").update({"drawing_data": canvas_result.json_data}).eq("id", st.session_state.room_id).execute()
+        elif st.session_state.game_state == "active":
+            # Guesser view
+            st.write(f"**Guess the word: {st.session_state.hidden_word}**")
+            canvas_kwargs = {
+                "fill_color": "rgba(255, 165, 0, 0.3)",
+                "stroke_width": 2,
+                "stroke_color": "#000000",
+                "background_color": "#ffffff",
+                "height": 450,
+                "width": 600,
+                "drawing_mode": "view",
+                "key": f"canvas_{st.session_state.room_id}_view"
+            }
+            if st.session_state.drawing_data:
+                canvas_kwargs["initial_drawing"] = st.session_state.drawing_data
+            st_canvas(**canvas_kwargs)
         else:
             st.write("**Waiting for the game to start...**")
     
