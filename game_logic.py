@@ -27,16 +27,17 @@ def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"
     st.session_state.last_sync = 0
     st.session_state.drawing_data = None
     st.session_state.drawing_player_index = None
-    st.session_state.hidden_word = ""  # Initialize hidden_word
+    st.session_state.hidden_word = ""
+    st.session_state.chat_messages = []
+    st.session_state.word_options = []
+    st.session_state.current_word = ""
 
     try:
-        # Check if room exists
         room_check_start = time.time()
         room = supabase.table("rooms").select("*").eq("id", room_id).execute()
         logger.info(f"Room check took {time.time() - room_check_start:.2f} seconds")
 
         if not room.data and is_owner:
-            # Create new room
             room_insert_start = time.time()
             room_data = {
                 "id": room_id,
@@ -53,14 +54,14 @@ def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"
                     "rounds_played": 0,
                     "current_word": "",
                     "drawing_player_id": "",
-                    "timer_start": 0
+                    "timer_start": 0,
+                    "word_options": []
                 },
                 "drawing_data": None
             }
             supabase.table("rooms").insert(room_data).execute()
             logger.info(f"Room insert took {time.time() - room_insert_start:.2f} seconds")
 
-            # Add player
             player_insert_start = time.time()
             player_id = str(uuid.uuid4())
             player_data = {
@@ -76,7 +77,6 @@ def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"
             supabase.table("players").insert(player_data).execute()
             logger.info(f"Player insert took {time.time() - player_insert_start:.2f} seconds")
 
-            # Add system messages
             message_insert_start = time.time()
             system_messages = [
                 {
@@ -98,7 +98,6 @@ def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"
             logger.info(f"Message insert took {time.time() - message_insert_start:.2f} seconds")
 
         elif room.data and not is_owner:
-            # Join existing room
             join_start = time.time()
             room = room.data[0]
             player_id = str(uuid.uuid4())
@@ -132,6 +131,8 @@ def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"
             st.session_state.drawing_data = room.get("drawing_data", None)
             st.session_state.drawing_player_index = None
             st.session_state.hidden_word = ""
+            st.session_state.word_options = []
+            st.session_state.current_word = ""
             logger.info(f"Join room took {time.time() - join_start:.2f} seconds")
 
         elif not room.data and not is_owner:
@@ -150,21 +151,19 @@ def initialize_game(supabase: Client, room_id, is_owner=False, username="Player"
 
 def sync_game_state(supabase: Client):
     """
-    Synchronize the local game state with Supabase data via polling.
+    Synchronize local game state with Supabase.
     """
     if not st.session_state.in_game or not st.session_state.room_id or not supabase:
         return
 
     current_time = time.time()
-    if current_time - st.session_state.last_sync < 5:
+    if current_time - st.session_state.last_sync < 2:  # Faster sync for chat
         return
 
     sync_start = time.time()
     try:
-        # Update player's last seen
-        supabase.table("players").update({"last_seen": int(time.time())}).eq("user_id", st.session_state.user_id).eq("room_id", st.session_state.room_id).execute()
+        supabase.table("players").update({"last_seen": int(current_time)}).eq("user_id", st.session_state.user_id).eq("room_id", st.session_state.room_id).execute()
 
-        # Fetch room data
         room = supabase.table("rooms").select("*").eq("id", st.session_state.room_id).execute()
         if not room.data:
             st.error("Room no longer exists!")
@@ -172,8 +171,6 @@ def sync_game_state(supabase: Client):
             return
 
         room = room.data[0]
-
-        # Fetch players data
         players_data = supabase.table("players").select("*").eq("room_id", st.session_state.room_id).execute()
         st.session_state.players = [
             {
@@ -184,11 +181,10 @@ def sync_game_state(supabase: Client):
                 "avatar": player["avatar"]
             }
             for player in players_data.data
-            if time.time() - player["last_seen"] < 60
+            if current_time - player["last_seen"] < 60
         ]
         st.session_state.players = sorted(st.session_state.players, key=lambda x: x["score"], reverse=True)
 
-        # Update game state
         game_state = room.get("game_state", {})
         st.session_state.game_state = game_state.get("status", "waiting")
 
@@ -205,13 +201,18 @@ def sync_game_state(supabase: Client):
                 st.session_state.hidden_word = "_ " * len(st.session_state.current_word)
                 st.session_state.round_number = game_state.get("current_round", 1)
                 st.session_state.rounds_played = game_state.get("rounds_played", 0)
-                st.session_state.timer_start = game_state.get("timer_start", time.time())
+                st.session_state.timer_start = game_state.get("timer_start", current_time)
+                st.session_state.word_options = game_state.get("word_options", [])
 
                 is_drawing_player = st.session_state.players[st.session_state.drawing_player_index]["id"] == st.session_state.user_id
                 if not is_drawing_player:
                     st.session_state.drawing_data = room.get("drawing_data", None)
                 else:
-                    st.session_state.drawing_data = None  # Drawer doesn't need initial drawing
+                    st.session_state.drawing_data = None
+            else:
+                st.session_state.word_options = []
+                st.session_state.current_word = ""
+                st.session_state.hidden_word = ""
         else:
             st.session_state.drawing_player_index = None
             st.session_state.drawing_data = None
@@ -220,10 +221,11 @@ def sync_game_state(supabase: Client):
             st.session_state.round_number = 1
             st.session_state.rounds_played = 0
             st.session_state.timer_start = 0
+            st.session_state.word_options = []
 
-        # Sync chat messages
         chat_data = supabase.table("chat_messages").select("message_data").eq("room_id", st.session_state.room_id).order("created_at").limit(50).execute()
         st.session_state.chat_messages = [msg["message_data"] for msg in chat_data.data]
+        logger.info(f"Chat messages synced: {len(st.session_state.chat_messages)}")
 
         st.session_state.last_sync = current_time
         logger.info(f"sync_game_state took {time.time() - sync_start:.2f} seconds")
@@ -234,24 +236,26 @@ def sync_game_state(supabase: Client):
 
 def start_game(supabase: Client):
     """
-    Start the game by selecting the first drawer and word.
+    Start the game with word options for the first drawer.
     """
-    if not st.session_state.is_room_owner or not supabase:
+    if not st.session_state.is_room_owner or not supabase or len(st.session_state.players) < st.session_state.min_players:
+        st.error("Cannot start game: Insufficient players or not owner")
         return
 
     try:
         drawer_index = random.randint(0, len(st.session_state.players) - 1)
         drawer_id = st.session_state.players[drawer_index]["id"]
         drawer_name = st.session_state.players[drawer_index]["name"]
-        selected_word = random.choice(st.session_state.word_lists[st.session_state.difficulty])
+        word_options = random.sample(st.session_state.word_lists[st.session_state.difficulty], 3)
 
         game_state = {
             "status": "active",
             "current_round": 1,
             "rounds_played": 0,
-            "current_word": selected_word,
+            "current_word": "",  # Set after drawer chooses
             "drawing_player_id": drawer_id,
-            "timer_start": int(time.time())
+            "timer_start": int(time.time()),
+            "word_options": word_options
         }
 
         supabase.table("rooms").update({
@@ -263,86 +267,37 @@ def start_game(supabase: Client):
             "room_id": st.session_state.room_id,
             "message_data": {
                 "type": "system",
-                "content": f"Game started! {drawer_name} is drawing first."
+                "content": f"Game started! {drawer_name} is choosing a word."
             }
         }
         supabase.table("chat_messages").insert(new_message).execute()
 
         st.session_state.game_state = "active"
         st.session_state.drawing_player_index = drawer_index
-        st.session_state.current_word = selected_word
-        st.session_state.hidden_word = "_ " * len(selected_word)
+        st.session_state.word_options = word_options
+        st.session_state.current_word = ""
+        st.session_state.hidden_word = ""
         st.session_state.timer_start = time.time()
         st.session_state.drawing_data = None
+        logger.info("Game started successfully")
+        st.experimental_rerun()
 
     except Exception as e:
         st.error(f"Error starting game: {e}")
         logger.error(f"Error starting game: {e}")
 
-def send_chat_message(supabase: Client, content, is_correct=False):
+def set_chosen_word(supabase: Client, chosen_word: str):
     """
-    Send a chat message, handling correct guesses and score updates.
+    Drawer selects a word from options.
     """
-    if not supabase:
+    if not supabase or st.session_state.players[st.session_state.drawing_player_index]["id"] != st.session_state.user_id:
         return
 
     try:
-        new_message = {
-            "room_id": st.session_state.room_id,
-            "message_data": {
-                "type": "player",
-                "player": st.session_state.username,
-                "content": content
-            }
-        }
-        if is_correct:
-            new_message["message_data"]["correct"] = True
-
-        supabase.table("chat_messages").insert(new_message).execute()
-
-        if is_correct:
-            time_left = st.session_state.round_time - (time.time() - st.session_state.timer_start)
-            score_gain = int(time_left * 5)
-            player = supabase.table("players").select("score").eq("user_id", st.session_state.user_id).eq("room_id", st.session_state.room_id).execute().data[0]
-            supabase.table("players").update({"score": player["score"] + score_gain}).eq("user_id", st.session_state.user_id).eq("room_id", st.session_state.room_id).execute()
-
-            word_message = {
-                "room_id": st.session_state.room_id,
-                "message_data": {
-                    "type": "system",
-                    "content": f"The word was: {st.session_state.current_word.upper()}"
-                }
-            }
-            supabase.table("chat_messages").insert(word_message).execute()
-
-            if st.session_state.rounds_played + 1 >= st.session_state.max_rounds:
-                end_game(supabase)
-            else:
-                new_round(supabase)
-
-    except Exception as e:
-        st.error(f"Error sending message: {e}")
-        logger.error(f"Error sending message: {e}")
-
-def new_round(supabase: Client):
-    """
-    Start a new round with the next drawer and word.
-    """
-    if not st.session_state.is_room_owner or not supabase:
-        return
-
-    try:
-        next_index = (st.session_state.drawing_player_index + 1) % len(st.session_state.players)
-        next_player_id = st.session_state.players[next_index]["id"]
-        next_player_name = st.session_state.players[next_index]["name"]
-        new_word = random.choice(st.session_state.word_lists[st.session_state.difficulty])
-
         room = supabase.table("rooms").select("game_state").eq("id", st.session_state.room_id).execute().data[0]
         game_state = room["game_state"]
-        game_state["current_round"] += 1
-        game_state["rounds_played"] += 1
-        game_state["current_word"] = new_word
-        game_state["drawing_player_id"] = next_player_id
+        game_state["current_word"] = chosen_word
+        game_state["word_options"] = []
         game_state["timer_start"] = int(time.time())
 
         supabase.table("rooms").update({
@@ -354,15 +309,114 @@ def new_round(supabase: Client):
             "room_id": st.session_state.room_id,
             "message_data": {
                 "type": "system",
-                "content": f"Round {game_state['current_round']}! {next_player_name} is drawing now!"
+                "content": f"{st.session_state.username} is drawing!"
+            }
+        }
+        supabase.table("chat_messages").insert(new_message).execute()
+
+        st.session_state.current_word = chosen_word
+        st.session_state.hidden_word = "_ " * len(chosen_word)
+        st.session_state.word_options = []
+        st.experimental_rerun()
+
+    except Exception as e:
+        st.error(f"Error choosing word: {e}")
+        logger.error(f"Error choosing word: {e}")
+
+def send_chat_message(supabase: Client, content, is_correct=False):
+    """
+    Send chat message with Skribbl.io scoring for correct guesses.
+    """
+    if not supabase:
+        return
+
+    try:
+        new_message = {
+            "room_id": st.session_state.room_id,
+            "message_data": {
+                "type": "player",
+                "player": st.session_state.username,
+                "content": content,
+                "correct": is_correct
+            }
+        }
+        supabase.table("chat_messages").insert(new_message).execute()
+
+        if is_correct and st.session_state.game_state == "active":
+            time_left = st.session_state.round_time - (time.time() - st.session_state.timer_start)
+            if time_left > 0:
+                guesser_score = int(100 * (time_left / st.session_state.round_time)) + 20  # Bonus for first guess
+                drawer_score = int(100 * (time_left / st.session_state.round_time))
+                
+                # Update guesser score
+                player = supabase.table("players").select("score").eq("user_id", st.session_state.user_id).eq("room_id", st.session_state.room_id).execute().data[0]
+                supabase.table("players").update({"score": player["score"] + guesser_score}).eq("user_id", st.session_state.user_id).eq("room_id", st.session_state.room_id).execute()
+
+                # Update drawer score
+                drawer_id = st.session_state.players[st.session_state.drawing_player_index]["id"]
+                drawer = supabase.table("players").select("score").eq("user_id", drawer_id).eq("room_id", st.session_state.room_id).execute().data[0]
+                supabase.table("players").update({"score": drawer["score"] + drawer_score}).eq("user_id", drawer_id).eq("room_id", st.session_state.room_id).execute()
+
+                word_message = {
+                    "room_id": st.session_state.room_id,
+                    "message_data": {
+                        "type": "system",
+                        "content": f"{st.session_state.username} guessed correctly! The word was: {st.session_state.current_word.upper()}"
+                    }
+                }
+                supabase.table("chat_messages").insert(word_message).execute()
+
+                if st.session_state.rounds_played + 1 >= st.session_state.max_rounds:
+                    end_game(supabase)
+                else:
+                    new_round(supabase)
+
+    except Exception as e:
+        st.error(f"Error sending message: {e}")
+        logger.error(f"Error sending message: {e}")
+
+def new_round(supabase: Client):
+    """
+    Start a new round with the next drawer and word options.
+    """
+    if not st.session_state.is_room_owner or not supabase:
+        return
+
+    try:
+        next_index = (st.session_state.drawing_player_index + 1) % len(st.session_state.players)
+        next_player_id = st.session_state.players[next_index]["id"]
+        next_player_name = st.session_state.players[next_index]["name"]
+        word_options = random.sample(st.session_state.word_lists[st.session_state.difficulty], 3)
+
+        room = supabase.table("rooms").select("game_state").eq("id", st.session_state.room_id).execute().data[0]
+        game_state = room["game_state"]
+        game_state["current_round"] += 1
+        game_state["rounds_played"] += 1
+        game_state["current_word"] = ""
+        game_state["drawing_player_id"] = next_player_id
+        game_state["timer_start"] = int(time.time())
+        game_state["word_options"] = word_options
+
+        supabase.table("rooms").update({
+            "game_state": game_state,
+            "drawing_data": None
+        }).eq("id", st.session_state.room_id).execute()
+
+        new_message = {
+            "room_id": st.session_state.room_id,
+            "message_data": {
+                "type": "system",
+                "content": f"Round {game_state['current_round']}! {next_player_name} is choosing a word."
             }
         }
         supabase.table("chat_messages").insert(new_message).execute()
 
         st.session_state.drawing_data = None
         st.session_state.drawing_player_index = next_index
-        st.session_state.current_word = new_word
-        st.session_state.hidden_word = "_ " * len(new_word)
+        st.session_state.current_word = ""
+        st.session_state.hidden_word = ""
+        st.session_state.word_options = word_options
+        st.experimental_rerun()
 
     except Exception as e:
         st.error(f"Error starting new round: {e}")
@@ -405,6 +459,9 @@ def end_game(supabase: Client):
         st.session_state.drawing_data = None
         st.session_state.drawing_player_index = None
         st.session_state.hidden_word = ""
+        st.session_state.current_word = ""
+        st.session_state.word_options = []
+        st.experimental_rerun()
 
     except Exception as e:
         st.error(f"Error ending game: {e}")
@@ -448,6 +505,11 @@ def leave_game(supabase: Client):
         st.session_state.drawing_data = None
         st.session_state.drawing_player_index = None
         st.session_state.hidden_word = ""
+        st.session_state.current_word = ""
+        st.session_state.word_options = []
+        st.session_state.chat_messages = []
+        logger.info("Player left game successfully")
+        st.experimental_rerun()
 
     except Exception as e:
         st.error(f"Error leaving game: {e}")
