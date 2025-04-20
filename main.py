@@ -69,8 +69,7 @@ if not st.session_state.in_game:
                 st.error("Please enter a username and room ID")
 else:
     sync_game_state(supabase)
-    render_game_ui()  # Render full UI (canvas, chat, players)
-    
+    render_game_ui(supabase)  # Pass supabase to render_game_ui
     # Game controls
     col1, col2 = st.columns(2)
     with col1:
